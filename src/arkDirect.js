@@ -20,6 +20,8 @@ export const ARK_ENDPOINT = 'https://ark.cn-beijing.volces.com/api/v3/images/gen
 export const MIN_AREA = 921600;
 /** 直连超时：原本地代理是 240 秒；方舟实测 27~107 秒（典型 58~85 秒） */
 export const AI_REDRAW_TIMEOUT_MS = 240000;
+/** 「测试连接」探针的超时。它只做参数校验，实测 ~0.2 秒就返回，所以给短超时即可。 */
+export const AI_PROBE_TIMEOUT_MS = 15000;
 /**
  * Q 版提示词 —— 实测有效的版本（第五版）
  * 核心：强制「Q版半身像」构图，头部占画面 2/3，禁止画全身

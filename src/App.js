@@ -1,6 +1,7 @@
 import WorkspaceCanvas from './WorkspaceCanvas.js';
 import ThreePreview from './ThreePreview.js';
-import { AI_REDRAW_TIMEOUT_MS, ARK_ENDPOINT, buildPrompt, calcSize } from './arkDirect.js';
+import { AI_PROBE_TIMEOUT_MS, AI_REDRAW_TIMEOUT_MS, ARK_ENDPOINT, buildPrompt, calcSize } from './arkDirect.js';
+import { ARK_LINKS, classifyAiProbe, formatRawBits, probeBody, probeInputFromResponse } from './arkDiagnostics.js';
 import { downloadPrintPdf, downloadPrintPng, downloadProjectJson, downloadUsageWorkbook } from './exporters.js';
 import { imageFileToBeads } from './imageToBeads.js';
 import { basicPalette, colorDistance, completePalette, getColor, nearestPaletteColor } from './palette.js';
@@ -71,6 +72,39 @@ const ui = {
         aiRedrawKeyLabel: 'API Key',
         aiRedrawKeyPlaceholder: '粘贴你的 Ark API Key（ark- 开头）',
         aiRedrawKeySaved: 'Key 已保存在本机浏览器，下次自动填充',
+        // ── 降低 AI 门槛：可选说明 / 检查清单 / 测试连接 ──
+        aiOptionalLine1: 'AI 是可选的 —— 不填 Key 也能用全部核心能力：图片转图纸、编辑、用量清单、导出。',
+        aiOptionalLine2: '想用 AI 重绘？需要自己的火山方舟 Key：需实名认证，约 0.3–0.6 元/张（充 10 元大约能玩 20–30 张）。',
+        aiChecklistTitle: '不知道怎么弄？点开检查清单',
+        aiChecklist: [
+            { text: '有火山引擎账号', hint: '打开后是控制台首页；还没账号就在这一页注册（手机号即可）。', link: 'console', linkLabel: '去注册 / 登录' },
+            { text: '完成实名认证（大陆生成式 AI 服务强制）', hint: '在控制台右上角头像菜单里找「实名认证」；需要身份证 + 人脸核验，一般几分钟就过。', link: 'console', linkLabel: '去实名认证' },
+            { text: '开通 doubao-seedream 模型', hint: '页面是一排模型卡片，卡片上有「开通」按钮，点它即可。', link: 'model', linkLabel: '去开通模型' },
+            { text: '创建并复制 API Key', hint: '页面上有「创建 API Key」；建好后会显示一串 ark- 开头的字符，点复制。', link: 'apiKey', linkLabel: '去创建 Key' },
+            { text: '把 Key 粘到下面的输入框，再点「测试连接」', hint: 'Key 只存在你自己的浏览器里，不会上传到任何服务器。', link: null, linkLabel: '' },
+        ],
+        aiProbeButton: '测试连接（不花钱）',
+        aiProbeRunning: '正在检测…',
+        aiProbeRetest: '重新检测',
+        aiProbeNeedKey: '请先在上面填好 API Key，再点测试。',
+        aiProbeText: {
+            ok: { title: '✅ 通道正常，可以开始生成了', steps: ['直接点下面的「AI 重绘」就行，约 0.3–0.6 元/张。'] },
+            'model-not-open': { title: '⚠️ 还差一步：这个模型还没开通', steps: ['点下面的「去开通模型」打开开通页', '找到 {model}，点「开通」', '回来再点一次「测试连接」'], link: 'model' },
+            'model-not-found': { title: '❌ 模型 ID 不对', steps: ['展开下面的「模型设置」', '确认那里的 ID 与你在控制台开通的完全一致', '再点一次「测试连接」'], link: 'model' },
+            'bad-key': { title: '❌ 连不上：最可能是 Key 不对', steps: ['点下面的「去复制 API Key」，重新复制一次（ark- 开头）', '粘回上面的输入框（前后不要有空格）', '再点一次「测试连接」', '换了新 Key 还是不行，就确认网络能访问 ark.cn-beijing.volces.com（公司网络 / 代理有时会挡）'], link: 'apiKey' },
+            timeout: { title: '⚠️ 检测超时', steps: ['方舟服务可能繁忙，或网络不稳', '等十几秒，再点一次「测试连接」'] },
+            'rate-limited': { title: '⚠️ 调用上限或额度不足', steps: ['去控制台看这个模型的用量与额度，需要就调整上限或充值', '这次请求没有生成图片，不扣费', '调整后回来再点一次「测试连接」'], link: 'console' },
+            policy: { title: '⚠️ 被内容审核拦下', steps: ['动漫 / 影视版权角色最容易被拦（迪士尼、宝可梦这类）', '换一张图，或把「AI 图的背景」改成「保留背景」再试'] },
+            'server-error': { title: '⚠️ 方舟服务端出错', steps: ['这是对方的问题，不是你配置错了', '等一两分钟，再点一次「测试连接」'] },
+            'bad-request': { title: '⚠️ 请求参数被拒', steps: ['通常是图片尺寸不合规', '换一张图片，或把「AI 图的背景」改成「保留背景」再试'] },
+            unknown: { title: '❌ 没见过的错误', steps: ['把下面的原始信息发给开发者'] },
+        },
+        aiExamplesTitle: '先看看 AI 重绘值不值这道门槛',
+        aiExamplesCaption: '每组从左到右：原图 → AI 重绘 → 拼豆图纸（52 格）',
+        aiExampleCaptions: ['真人照片', '动漫设定图', '纯色背景人像'],
+        aiLinkApiKey: '去复制 API Key',
+        aiLinkModel: '去开通模型',
+        aiLinkConsole: '去打开控制台',
         aiRedrawFailed: 'AI 重绘失败',
         referenceImage: '参考图',
         uploadReferenceImage: '上传参考图',
@@ -312,6 +346,39 @@ const ui = {
         aiRedrawKeyLabel: 'API Key',
         aiRedrawKeyPlaceholder: 'Paste your Ark API Key (starts with ark-)',
         aiRedrawKeySaved: 'Key saved in this browser, filled automatically next time',
+        // ── Lowering the AI barrier: optional notice / checklist / connection test ──
+        aiOptionalLine1: 'AI is optional — every core feature works without a key: image to pattern, editing, usage list, exports.',
+        aiOptionalLine2: 'Want AI redraw? You need your own Volcengine Ark key: real-name verification required, about ¥0.3–0.6 per image (¥10 gets you roughly 20–30).',
+        aiChecklistTitle: "Not sure how? Open the checklist",
+        aiChecklist: [
+            { text: 'A Volcengine account', hint: 'Opening it lands on the console home; register right there if you have no account (phone number is enough).', link: 'console', linkLabel: 'Sign up / sign in' },
+            { text: 'Real-name verification (required for mainland GenAI services)', hint: 'Look for "Real-name verification" under the avatar menu at the top right; ID plus a face check, usually a few minutes.', link: 'console', linkLabel: 'Verify identity' },
+            { text: 'Activate a doubao-seedream model', hint: 'The page shows a row of model cards; each has an "Activate" button — click it.', link: 'model', linkLabel: 'Activate model' },
+            { text: 'Create and copy an API key', hint: 'There is a "Create API key" button; the key starts with ark- — click copy.', link: 'apiKey', linkLabel: 'Create key' },
+            { text: 'Paste the key below, then click "Test connection"', hint: 'The key stays in your own browser and is never uploaded to any server.', link: null, linkLabel: '' },
+        ],
+        aiProbeButton: 'Test connection (free)',
+        aiProbeRunning: 'Checking…',
+        aiProbeRetest: 'Check again',
+        aiProbeNeedKey: 'Fill in the API key above first, then run the test.',
+        aiProbeText: {
+            ok: { title: '✅ All good — you can generate now', steps: ['Just click "AI redraw" below; about ¥0.3–0.6 per image.'] },
+            'model-not-open': { title: '⚠️ One step left: this model is not activated', steps: ['Click "Activate model" below', 'Find {model} and click "Activate"', 'Come back and click "Test connection" again'], link: 'model' },
+            'model-not-found': { title: '❌ Wrong model ID', steps: ['Open "Model settings" below', 'Make sure the ID matches what you activated in the console', 'Click "Test connection" again'], link: 'model' },
+            'bad-key': { title: '❌ Cannot reach Ark — most likely a bad key', steps: ['Click "Copy API key" below and copy it again (starts with ark-)', 'Paste it back above (no leading or trailing spaces)', 'Click "Test connection" again', 'If a new key still fails, check that your network can reach ark.cn-beijing.volces.com (office networks and proxies sometimes block it)'], link: 'apiKey' },
+            timeout: { title: '⚠️ The check timed out', steps: ['Ark may be busy, or the network is unstable', 'Wait a few seconds and click "Test connection" again'] },
+            'rate-limited': { title: '⚠️ Call limit or quota reached', steps: ['Check this model’s usage and quota in the console; raise the limit or top up if needed', 'No image was generated, so this request was not charged', 'Come back and click "Test connection" again'], link: 'console' },
+            policy: { title: '⚠️ Blocked by content moderation', steps: ['Anime and film characters are blocked most often (Disney, Pokémon and the like)', 'Try another image, or switch "AI background" to "Keep background"'] },
+            'server-error': { title: '⚠️ Ark server error', steps: ['This is on their side, not a mistake in your setup', 'Wait a minute or two and click "Test connection" again'] },
+            'bad-request': { title: '⚠️ Request rejected', steps: ['Usually an image size problem', 'Try another image, or switch "AI background" to "Keep background"'] },
+            unknown: { title: '❌ Unrecognised error', steps: ['Send the raw details below to the developer'] },
+        },
+        aiExamplesTitle: 'See whether AI redraw is worth the setup',
+        aiExamplesCaption: 'In each row: original → AI redraw → bead pattern (52 cells)',
+        aiExampleCaptions: ['Real photo', 'Anime character', 'Studio portrait'],
+        aiLinkApiKey: 'Copy API key',
+        aiLinkModel: 'Activate model',
+        aiLinkConsole: 'Open console',
         aiRedrawFailed: 'AI redraw failed',
         referenceImage: 'Reference Image',
         uploadReferenceImage: 'Upload reference',
@@ -599,6 +666,20 @@ export default function App() {
     // 模型设置默认收起，需要时点开
     const [aiModelOpen, setAiModelOpen] = useState(false);
     const [aiRedrawing, setAiRedrawing] = useState(false);
+    /** 「测试连接」探针。分类逻辑在 src/arkDiagnostics.ts（纯函数，有独立单测）。
+     *  probe 用 1x1 画布，方舟在参数校验阶段就拒绝 → 不生成图片、不扣费。 */
+    const [aiProbeRunning, setAiProbeRunning] = useState(false);
+    const [aiProbeResult, setAiProbeResult] = useState(null);
+    /** 检查清单的勾选状态（纯本地，存 localStorage，data: 页面下不可用时静默降级） */
+    const [checklistDone, setChecklistDone] = useState(() => {
+        try {
+            const saved = JSON.parse(localStorage.getItem('ark-checklist') ?? '[]');
+            return Array.isArray(saved) ? saved : [];
+        }
+        catch {
+            return [];
+        }
+    });
     // AI 结果缩略图（data URL，直接给 <img> 用，省掉 blob 回收的麻烦）
     const [aiResultUrl, setAiResultUrl] = useState(null);
     /**
@@ -1089,6 +1170,104 @@ export default function App() {
             bytes[i] = bin.charCodeAt(i);
         return new File([bytes], fileName, { type: mime });
     }
+    /** 直达按钮的文案（URL 在 arkDiagnostics 里，与语言无关） */
+    function arkLinkLabel(kind) {
+        if (kind === 'apiKey')
+            return text.aiLinkApiKey;
+        if (kind === 'model')
+            return text.aiLinkModel;
+        return text.aiLinkConsole;
+    }
+    /** 把分类结果拼成给用户看的多行文案。
+     *  文案统一从 i18n 按状态取，`{model}` 占位替换成当前模型 ID —— 这样中英一致、
+     *  而且「错误码 → 文案」的覆盖关系集中在一处，便于核对有没有漏。
+     *
+     *  末尾附上「原始信息」（HTTP 状态码 + code + request_id + 服务端消息）：
+     *  - `unknown`：完全没见过，必须给全，否则没法排查
+     *  - `bad-key`：网络层失败时这里就是「原始错误」（旧版网络失败文案也带了这一句），
+     *    而且「HTTP 401」和「TypeError: Failed to fetch」能帮用户区分「Key 错」和「网不通」 */
+    function formatAiError(verdict, raw) {
+        const entry = text.aiProbeText[verdict.status] ?? text.aiProbeText.unknown;
+        const modelId = (aiModel || DEFAULT_AI_MODEL).trim();
+        const lines = [String(entry.title).replace('{model}', modelId)];
+        for (const step of entry.steps ?? [])
+            lines.push(`· ${String(step).replace('{model}', modelId)}`);
+        if (verdict.status === 'timeout') {
+            lines.push(`（已等待 ${Math.round(AI_REDRAW_TIMEOUT_MS / 1000)} 秒）`);
+        }
+        if (verdict.status === 'unknown' || verdict.status === 'bad-key') {
+            const bits = formatRawBits(raw);
+            if (bits)
+                lines.push(bits);
+        }
+        return lines.join('\n');
+    }
+    /** 零费用「测试连接」探针。
+     *  画布故意用 1x1（低于方舟要求的最小面积 921600），方舟在**参数校验阶段**就拒绝，
+     *  不会生成图片、不扣费 —— 错误消息本身就是证据。 */
+    async function runAiProbe() {
+        if (aiProbeRunning)
+            return;
+        const key = aiApiKey.trim();
+        if (!key)
+            return;
+        const modelId = (aiModel || DEFAULT_AI_MODEL).trim();
+        setAiProbeRunning(true);
+        setAiProbeResult(null);
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), AI_PROBE_TIMEOUT_MS);
+        try {
+            const resp = await fetch(ARK_ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+                body: JSON.stringify(probeBody(modelId)),
+                signal: controller.signal,
+            });
+            const bodyText = await resp.text();
+            const input = probeInputFromResponse(resp.status, bodyText);
+            let requestId = '';
+            try {
+                const parsed = JSON.parse(bodyText);
+                requestId = parsed?.error?.request_id ?? parsed?.request_id ?? '';
+            }
+            catch {
+                /* 非 JSON 响应：保持空 */
+            }
+            setAiProbeResult({
+                verdict: classifyAiProbe(input),
+                raw: { code: input.code ?? '', requestId, message: input.message ?? '', httpStatus: resp.status },
+            });
+        }
+        catch (error) {
+            const name = error instanceof Error ? error.name : String(error);
+            setAiProbeResult({
+                verdict: classifyAiProbe({ httpStatus: null, networkError: name }),
+                raw: {
+                    code: '',
+                    requestId: '',
+                    message: error instanceof Error ? error.message : String(error),
+                    httpStatus: null,
+                },
+            });
+        }
+        finally {
+            window.clearTimeout(timer);
+            setAiProbeRunning(false);
+        }
+    }
+    function toggleChecklist(index) {
+        setChecklistDone((current) => {
+            const next = [...current];
+            next[index] = !next[index];
+            try {
+                localStorage.setItem('ark-checklist', JSON.stringify(next));
+            }
+            catch {
+                /* 存不了不影响使用 */
+            }
+            return next;
+        });
+    }
     /** 直连火山方舟，得到 Q 版像素画（返回新的 File 和缩略图 data URL）
      *  纯静态部署（GitHub Pages）下没有本地代理，所以浏览器直接调方舟：
      *  方舟对任意 Origin 都回跨域头，预检允许 authorization,content-type。 */
@@ -1124,15 +1303,16 @@ export default function App() {
             });
         }
         catch (error) {
-            if (error instanceof DOMException && error.name === 'AbortError') {
-                throw new Error(`AI 重绘超时（已等待 ${Math.round(AI_REDRAW_TIMEOUT_MS / 1000)} 秒）。`
-                    + '方舟一次生成通常 30~110 秒，超时说明网络太慢或服务繁忙，稍后重试即可（这次没有拿到图片）。');
-            }
-            // 网络层就失败了。注意：方舟在 Key 无效时返回的 401 不带跨域头，
-            // 浏览器读不到响应，同样只能报成网络错误 —— 所以这里必须提醒检查 Key。
-            const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-            throw new Error('连不上火山方舟；如果 Key 填错也会表现成这样，请检查 Key（ark- 开头，控制台重新复制一个）。'
-                + `另外确认网络能访问 ark.cn-beijing.volces.com。原始错误：${raw}`);
+            // 网络层失败。⚠️ 关键：方舟在 Key 无效时返回的 401 **不带跨域头**，浏览器读不到响应体，
+            // 所以「Key 不对」在这里只能表现成 TypeError。分类器会把这种情况判成 bad-key，
+            // 文案里**同时**说明「最可能是 Key 不对」，而不是只说成网络问题。
+            const name = error instanceof Error ? error.name : String(error);
+            throw new Error(formatAiError(classifyAiProbe({ httpStatus: null, networkError: name }), {
+                code: '',
+                requestId: '',
+                message: error instanceof Error ? error.message : String(error),
+                httpStatus: null,
+            }));
         }
         finally {
             window.clearTimeout(timer);
@@ -1146,44 +1326,17 @@ export default function App() {
             throw new Error(`AI 服务返回了无法解析的内容（HTTP ${resp.status}）：${text.slice(0, 300)}`);
         }
         if (!resp.ok || json.error) {
-            const message = json?.error?.message || json?.message || `AI 服务返回 HTTP ${resp.status}`;
+            // 分类逻辑统一在 src/arkDiagnostics.ts（纯函数、有单测），文案统一从 i18n 按状态取。
+            // 这样「测试连接」和「真实生成失败」给的是同一套说法，不会两处不一致。
             const code = json?.error?.code ?? '';
+            const message = json?.error?.message || json?.message || `HTTP ${resp.status}`;
             const requestId = json?.error?.request_id ?? json?.request_id ?? '';
-            // 把常见原因翻译成人话，省得只知道一个报错码
-            let hint = '';
-            const lowered = String(message).toLowerCase() + String(code).toLowerCase();
-            if (lowered.includes('modelnotopen') || lowered.includes('has not activated the model')) {
-                hint = '原因：你火山方舟账号里**这个模型还没开通**。'
-                    + '去火山方舟控制台 →「开通管理」里开通对应模型；或者在这里展开「模型设置」，换成一个你已开通的模型 ID 再试。';
-            }
-            else if (lowered.includes('setlimitexceeded')) {
-                hint = '原因：**这个模型的调用上限被触发了**（通常是免费额度用完了，或你在控制台给模型设了用量上限）。'
-                    + '去火山方舟控制台 →「开通管理」，看该模型的用量/额度，需要的话调整上限或升级套餐；'
-                    + '也可以在这里展开「模型设置」换一个模型试试。'
-                    + '（这次请求没有生成图片，不扣费）';
-            }
-            else if (resp.status === 429 || lowered.includes('ratelimit') || lowered.includes('quota')) {
-                hint = '原因：调用太频繁或额度不足。等一两分钟再点；如果反复出现，去控制台确认余额和用量限制。'
-                    + '（这类失败通常不扣费）';
-            }
-            else if (lowered.includes('policyviolation') || lowered.includes('sensitive')) {
-                hint = '原因：这张图被火山方舟的内容审核拦下了（动漫/影视的版权角色很常见，比如迪士尼、宝可梦等）。'
-                    + '可以换成不涉及版权角色的图片，或者改用「保留背景」再试。';
-            }
-            else if (resp.status === 401 || lowered.includes('authentication') || lowered.includes('invalid api key')) {
-                hint = '原因：API Key 不对或已失效。到火山方舟控制台重新复制一个（ark- 开头）填进来。';
-            }
-            else if (resp.status === 429 || lowered.includes('ratelimit') || lowered.includes('quota')) {
-                hint = '原因：调用频率超限或余额不足。等一会儿再试，或去控制台确认余额。';
-            }
-            else if (resp.status >= 500) {
-                hint = '原因：火山方舟服务端出错。稍等一会儿重试即可。';
-            }
-            else if (resp.status === 400) {
-                hint = '原因：请求参数被拒绝（图片尺寸不合规，或图片内容被拦）。换一张图或改用「保留背景」再试。';
-            }
-            const detail = [code && `code=${code}`, requestId && `request_id=${requestId}`].filter(Boolean).join('  ');
-            throw new Error(`${hint || 'AI 重绘失败。'}${hint ? '' : message}（HTTP ${resp.status}${detail ? '  ' + detail : ''}）`);
+            throw new Error(formatAiError(classifyAiProbe({ httpStatus: resp.status, code, message }), {
+                code,
+                requestId,
+                message,
+                httpStatus: resp.status,
+            }));
         }
         const item = (json.data ?? []).find((d) => d.b64_json);
         if (!item) {
@@ -1733,6 +1886,27 @@ export default function App() {
                             text.aiRedrawTitle,
                             React.createElement("span", { className: "help-dot image-help-dot", ...imageHelpProps(text.aiRedrawHint) }, "?"))),
                     React.createElement("small", { className: "ai-redraw-cost" }, text.aiRedrawCost)),
+                React.createElement("div", { className: "ai-optional-notice" },
+                    React.createElement("strong", null, text.aiOptionalLine1),
+                    React.createElement("span", null, text.aiOptionalLine2)),
+                React.createElement("details", { className: "ai-checklist" },
+                    React.createElement("summary", null, text.aiChecklistTitle),
+                    React.createElement("ol", { className: "ai-checklist-list" }, text.aiChecklist.map((item, index) => (React.createElement("li", { key: index, className: checklistDone[index] ? 'is-done' : '' },
+                        React.createElement("label", { className: "ai-check-item" },
+                            React.createElement("input", { type: "checkbox", checked: !!checklistDone[index], onChange: () => toggleChecklist(index) }),
+                            React.createElement("span", { className: "ai-check-text" }, item.text)),
+                        React.createElement("small", { className: "ai-check-hint" }, item.hint),
+                        item.link && (React.createElement("a", { className: "ai-direct-link", href: ARK_LINKS[item.link], target: "_blank", rel: "noreferrer" }, item.linkLabel))))))),
+                React.createElement("div", { className: "ai-examples" },
+                    React.createElement("div", { className: "ai-examples-head" },
+                        React.createElement("strong", null, text.aiExamplesTitle),
+                        React.createElement("small", null, text.aiExamplesCaption)),
+                    ['ex1', 'ex2', 'ex3'].map((key, index) => (React.createElement("figure", { className: "ai-example-row", key: key },
+                        React.createElement("figcaption", { className: "ai-example-caption" }, text.aiExampleCaptions[index]),
+                        React.createElement("div", { className: "ai-example-cells" },
+                            React.createElement("img", { src: `./assets/examples/${key}-original.jpg`, alt: "", loading: "lazy" }),
+                            React.createElement("img", { src: `./assets/examples/${key}-ai.jpg`, alt: "", loading: "lazy" }),
+                            React.createElement("img", { src: `./assets/examples/${key}-pattern.png`, alt: "", loading: "lazy" })))))),
                 React.createElement("div", { className: "ai-redraw-row" },
                     aiResultUrl ? (React.createElement("img", { className: "ai-redraw-thumb", src: aiResultUrl, alt: "" })) : (React.createElement("span", { className: "ai-redraw-thumb is-empty", "aria-hidden": "true" })),
                     React.createElement("label", { className: "stacked-field ai-redraw-bg-field" },
@@ -1747,6 +1921,26 @@ export default function App() {
                                 setAiApiKey(value);
                                 localStorage.setItem('ark-api-key', value);
                             } }))),
+                React.createElement("div", { className: "ai-probe" },
+                    React.createElement("div", { className: "ai-probe-actions" },
+                        React.createElement("button", { type: "button", className: "ai-probe-button", disabled: aiProbeRunning || !aiApiKey.trim(), onClick: () => void runAiProbe() }, aiProbeRunning ? text.aiProbeRunning : text.aiProbeButton)),
+                    !aiApiKey.trim() && React.createElement("small", { className: "ai-probe-hint" }, text.aiProbeNeedKey),
+                    aiProbeResult && (() => {
+                        const verdict = aiProbeResult.verdict;
+                        const entry = text.aiProbeText[verdict.status] ?? text.aiProbeText.unknown;
+                        const modelId = (aiModel || DEFAULT_AI_MODEL).trim();
+                        // 原始信息（HTTP + code + request_id + 服务端消息）：
+                        // unknown 必须给全，bad-key 给出来才能区分「Key 错（401）」和「网不通（TypeError）」
+                        const rawBits = formatRawBits(aiProbeResult.raw);
+                        const showRaw = (verdict.status === 'unknown' || verdict.status === 'bad-key') && !!rawBits;
+                        return (React.createElement("div", { className: `ai-probe-result is-${verdict.level}`, role: "status" },
+                            React.createElement("strong", null, String(entry.title).replace('{model}', modelId)),
+                            React.createElement("ol", { className: "ai-probe-steps" }, (entry.steps ?? []).map((step, index) => (React.createElement("li", { key: index }, String(step).replace('{model}', modelId))))),
+                            React.createElement("div", { className: "ai-probe-result-actions" },
+                                verdict.linkKind && (React.createElement("a", { className: "ai-direct-link is-primary", href: ARK_LINKS[verdict.linkKind], target: "_blank", rel: "noreferrer" }, arkLinkLabel(verdict.linkKind))),
+                                React.createElement("button", { type: "button", className: "ai-probe-retest", disabled: aiProbeRunning, onClick: () => void runAiProbe() }, text.aiProbeRetest)),
+                            showRaw && React.createElement("small", { className: "ai-probe-raw" }, rawBits)));
+                    })()),
                 React.createElement("div", { className: "ai-model-block" },
                     React.createElement("button", { type: "button", className: "ai-model-toggle", "aria-expanded": aiModelOpen, onClick: () => setAiModelOpen((v) => !v) },
                         React.createElement("span", null, text.aiModelLabel),
