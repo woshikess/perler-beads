@@ -4004,6 +4004,57 @@ button:focus-visible {
   color: #4b5563;
 }
 
+/* ── 顶栏「中间地带」修复（981–1499px）──────────────────────────────────────
+   背景：.topbar 是四列网格。≤1500px 时固定列 230+72+360 加 padding 共吃掉 682px，
+   而中间列要装下「画布参数 321 + 命令区约 474」≈ 803px，所以单行排版需要约 1485px。
+   偏偏 .topbar-command-zone 是 flex-wrap: nowrap、无法收缩 —— 窄屏时它直接溢出自己的
+   格子、画到相邻列上面，造成按钮互相压住**并且点不到**。
+   实测（getBoundingClientRect 二维相交 + elementFromPoint 命中测试）：
+     1500px  0 重叠 / 15 命中      1400px  2 重叠 / 13 命中
+     1200px 11 重叠 / 10 命中      1000px 10 重叠 /  8 命中
+     980px   0 重叠 / 15 命中（已是三行堆叠）
+   做法：把「画布参数 + 全部按钮」整行下移，品牌与右侧控件留在第一行。
+   两行约 100px 高，比 980px 那套三行堆叠（145px）省 45px 纵向空间。
+   不缩任何字号、不隐藏任何按钮。
+   断点贴着 1500 放（1500 实测尚可、1400 起坏），1600px 及以上完全不进这段。
+
+   为什么不做「更多 ▾」菜单：本档根因是纵向不够，不是按钮太多。收进菜单会把
+   「导出图纸 / 撤销」这类常用操作变成要点两次，还要额外保证菜单的键盘可达性；
+   按钮全部留在页面上，「功能可达性」天然成立。 */
+@media (max-width: 1499px) and (min-width: 981px) {
+  .topbar {
+    /* 顺带去掉第 2 列那 84px —— 全文件没有任何元素使用 grid-column: 2，是纯死列；
+       右列由固定 360px 改为按内容自适应（其内容实测仅 169px）。
+       这两条**只在本档生效**，所以 1600px 的网格定义不变。 */
+    grid-template-columns: minmax(0, 1fr) max-content;
+    row-gap: 8px;
+  }
+
+  .brand-lockup {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .topbar-right {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .topbar-workspace {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+
+  /* 按钮左对齐；万一某些平台字体更宽导致第二行也放不下，让按钮组整体换行，
+     而不是互相重叠 —— 「宁可贵一行，也不重叠」的安全阀。 */
+  .topbar-command-zone {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+}
+
 @media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 82px minmax(0, 1fr);
