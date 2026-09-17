@@ -110,7 +110,7 @@ function renderPrintCanvas(project, options) {
     context.fillText(title, margin, margin + 16);
     context.fillStyle = '#6b7280';
     context.font = '12px Arial, "Microsoft YaHei", sans-serif';
-    context.fillText('Perler Beads Generator', margin, margin + 40);
+    context.fillText('克斯拼豆图纸生成器', margin, margin + 40);
     if (options.authorName?.trim()) {
         context.textAlign = 'right';
         context.fillStyle = '#4b5563';

@@ -10,7 +10,7 @@ const { useEffect, useMemo, useRef, useState } = React;
 const languageKey = 'perler-beads-generator:language';
 const ui = {
     zh: {
-        appName: '拼豆图纸生成器',
+        appName: '克斯拼豆图纸生成器',
         board: '拼豆板',
         apply: '应用',
         commonSizes: '常用尺寸',
@@ -251,7 +251,7 @@ const ui = {
         },
     },
     en: {
-        appName: 'Perler Beads Generator',
+        appName: "Kesi's Perler Beads Generator",
         board: 'Pegboard',
         apply: 'Apply',
         commonSizes: 'Common sizes',
@@ -1634,7 +1634,7 @@ export default function App() {
                 event.currentTarget.value = '';
             } }),
         React.createElement("header", { className: "topbar" },
-            React.createElement("div", { className: "brand-lockup", "aria-label": "Perler Beads Generator" },
+            React.createElement("div", { className: "brand-lockup", "aria-label": text.appName },
                 React.createElement("img", { className: "logo-mark", src: "./assets/logo.png", alt: "", "aria-hidden": "true" }),
                 React.createElement("div", null,
                     React.createElement("strong", null, text.appName),
