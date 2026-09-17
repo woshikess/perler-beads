@@ -237,42 +237,13 @@ button:focus-visible {
   color: var(--text-muted);
 }
 
+/* 顶栏 logo：Q 版像素画（透明底 PNG，由 scripts/make-icons.cjs 生成）。
+   原来是米色渐变方块 + 4 颗彩豆；透明底的图再垫渐变底会发脏，所以底和彩豆样式都删掉了。 */
 .logo-mark {
-  display: grid;
-  grid-template-columns: repeat(2, 13px);
-  gap: 4px;
-  align-items: center;
-  justify-content: center;
+  display: block;
   width: 38px;
   height: 38px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: linear-gradient(180deg, #fffaf0, #eadfcd);
-}
-
-.logo-mark span {
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  box-shadow:
-    inset -1px -1px 2px rgba(0, 0, 0, 0.2),
-    inset 1px 1px 2px rgba(255, 255, 255, 0.5);
-}
-
-.logo-mark span:nth-child(1) {
-  background: #175e64;
-}
-
-.logo-mark span:nth-child(2) {
-  background: #f3d247;
-}
-
-.logo-mark span:nth-child(3) {
-  background: #c93a35;
-}
-
-.logo-mark span:nth-child(4) {
-  background: #3f9e55;
+  object-fit: contain;
 }
 
 .topbar-params,
@@ -880,15 +851,8 @@ button:focus-visible {
   }
 
   .logo-mark {
-    grid-template-columns: repeat(2, 11px);
-    gap: 3px;
     width: 34px;
     height: 34px;
-  }
-
-  .logo-mark span {
-    width: 11px;
-    height: 11px;
   }
 
   .topbar-workspace,
