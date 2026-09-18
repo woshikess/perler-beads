@@ -1,3 +1,37 @@
+// ---------------------------------------------------------------- 颜色距离
+//
+// 「每个格子换成哪颗豆」= 把格子颜色跟整块调色板比一遍，取距离最小的那颗。
+// 距离只有一种：**带红均值加权的 RGB 欧氏距离**（下面的 `colorDistanceRgb`），
+// 全项目取距离一律走 `colorDistance`，不要在别处另写一份。
+//
+// 历史（2026-09）：曾把这里换成 Lab 感知色差 ΔE00（CIE 2000 色差公式）。
+// 公式本身按官方 34 组标准向量验过（全对，最大误差 4.95e-5），但**它把管线里所有
+// 硬编码阈值的实际含义一起改了** —— imageToBeads.ts 的 18/34、90、[0,26,42,62,84]
+// 都是按 RGB 距离 0~765 的量纲调的，换成 0~100 量纲的 ΔE00 后同一批阈值严格了约 7 倍，
+// 用色数被砍掉一半、画面明显变平（人像保真度反而差 23%），用户判定不如旧算法。
+// 结论：**不是 ΔE00 不行，而是阈值没跟着重标定** —— 它在真实管线里的效果至今没被
+// 独立测出来。代码与界面开关已随本次改动全部删除，要重捡必须先决定阈值口径，
+// 不要直接把这个函数换掉。
+// A/B 图纸、量化指标与 34 组标准向量实测留在 `_审核/` 的那个对比报告目录里
+// （README.md 是入口；目录名就是被删掉的算法代号），完整来历见删掉它的那条提交信息。
+/**
+ * 带红均值加权的 RGB 欧氏距离 —— **本项目唯一的颜色距离，公式与历史版本逐字一致**。
+ * 红均值加权照顾了人眼对绿色更敏感，比纯欧氏更符合直觉。
+ */
+export function colorDistanceRgb(a, b) {
+    const redMean = (a[0] + b[0]) / 2;
+    const r = a[0] - b[0];
+    const g = a[1] - b[1];
+    const blue = a[2] - b[2];
+    return Math.sqrt((2 + redMean / 256) * r * r + 4 * g * g + (2 + (255 - redMean) / 256) * blue * blue);
+}
+/**
+ * 当前生效的颜色距离 = `colorDistanceRgb`，没有分支、没有开关。
+ * 保留这个名字是为了让既有调用方（imageToBeads / App）的 import 不用改。
+ */
+export function colorDistance(a, b) {
+    return colorDistanceRgb(a, b);
+}
 const rawColorsCsv = `
 A1,#FAF4C8
 A2,#FFFFD5
@@ -293,9 +327,6 @@ ZG6,#94BFE2
 ZG7,#E2A9D2
 ZG8,#AB91C0
 `;
-export const brandLabels = {
-    MARD: 'MARD',
-};
 export const paletteVersion = 'mard-291-v1';
 function parseRawColors(csv) {
     return csv
@@ -339,7 +370,41 @@ export function getColor(id) {
         return undefined;
     return completePalette.find((color) => color.id === id);
 }
-export function nearestPaletteColor(rgb, candidates = palette) {
+// ---------------------------------------------------------- 最近色查找策略
+//
+// 为什么需要策略：出图管线里 `nearestPaletteColor` 是绝对热点 ——
+// `rankPaletteColors` 会对**每个格子的每个采样**在整块调色板（221 色）里找最近色，
+// 一张 52 格的人像约 1300 万次比较。
+//
+// **记忆化（memo）**：同一个源色 + 同一块候选调色板 → 结果必然相同，直接缓存。
+// 源图大量像素重复（纯色/渐变区域），命中率极高，而且**结果与不缓存逐位一致**。
+//
+// 默认：memo 开。
+let nearestMemoEnabled = true;
+export function setNearestOptions(options) {
+    if (options.memo !== undefined)
+        nearestMemoEnabled = options.memo;
+    clearNearestMemo();
+}
+export function getNearestOptions() {
+    return { memo: nearestMemoEnabled };
+}
+/** 候选数组 → (打包 RGB → 结果)。用 WeakMap，候选数组被回收时缓存跟着走，不会泄漏。 */
+let nearestMemo = new WeakMap();
+/** 清空记忆化。换候选调色板 / 改策略时必须调用，否则会拿到上一次的答案。 */
+export function clearNearestMemo() {
+    nearestMemo = new WeakMap();
+}
+/** 只对整数 RGB 做记忆化 —— 小数（格子平均值）四舍五入后 key 会撞车，宁可不算。 */
+function packRgb(rgb) {
+    const r = rgb[0];
+    const g = rgb[1];
+    const b = rgb[2];
+    if (!Number.isInteger(r) || !Number.isInteger(g) || !Number.isInteger(b))
+        return -1;
+    return (r << 16) | (g << 8) | b;
+}
+function nearestLinear(rgb, candidates) {
     let best = candidates[0];
     let bestDistance = Number.POSITIVE_INFINITY;
     for (const color of candidates) {
@@ -351,12 +416,23 @@ export function nearestPaletteColor(rgb, candidates = palette) {
     }
     return best;
 }
-export function colorDistance(a, b) {
-    const redMean = (a[0] + b[0]) / 2;
-    const r = a[0] - b[0];
-    const g = a[1] - b[1];
-    const blue = a[2] - b[2];
-    return Math.sqrt((2 + redMean / 256) * r * r + 4 * g * g + (2 + (255 - redMean) / 256) * blue * blue);
+export function nearestPaletteColor(rgb, candidates = palette) {
+    if (!nearestMemoEnabled)
+        return nearestLinear(rgb, candidates);
+    const key = packRgb(rgb);
+    if (key < 0)
+        return nearestLinear(rgb, candidates);
+    let cache = nearestMemo.get(candidates);
+    if (!cache) {
+        cache = new Map();
+        nearestMemo.set(candidates, cache);
+    }
+    const hit = cache.get(key);
+    if (hit !== undefined)
+        return hit;
+    const best = nearestLinear(rgb, candidates);
+    cache.set(key, best);
+    return best;
 }
 export function mappedCode(color, brand) {
     return color.codes[brand] ?? color.primaryCode;

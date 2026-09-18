@@ -3,6 +3,7 @@ import ThreePreview from './ThreePreview.js';
 import { AI_REDRAW_TIMEOUT_MS, ARK_ENDPOINT, buildPrompt, calcSize } from './arkDirect.js';
 import { downloadPrintPdf, downloadPrintPng, downloadProjectJson, downloadUsageWorkbook } from './exporters.js';
 import { imageFileToBeads } from './imageToBeads.js';
+import ParamNumberField from './ParamNumberField.js';
 import { basicPalette, colorDistance, completePalette, getColor, nearestPaletteColor } from './palette.js';
 import { composeVisibleCells, createLayer, createProject, loadDraft, normalizeProject, saveDraft, withCells, withLayers } from './project.js';
 import { findIsolatedBeads, summarizeUsage } from './usage.js';
@@ -66,12 +67,9 @@ const ui = {
         paramsLocalNote: '改动后自动更新',
         autoRefreshConfirm: '检测到图纸已被手动修改。改参数会自动重新生成图纸，手动修改的部分将会丢失。确定继续吗？',
         copyError: '复制详情',
-        aiRedrawNeedKey: '请先填写 API Key',
         aiRedrawRunning: 'AI 正在重绘，约需 60-90 秒…',
         aiRedrawKeyLabel: 'API Key',
         aiRedrawKeyPlaceholder: '粘贴你的 Ark API Key（ark- 开头）',
-        aiRedrawKeySaved: 'Key 已保存在本机浏览器，下次自动填充',
-        aiRedrawFailed: 'AI 重绘失败',
         referenceImage: '参考图',
         uploadReferenceImage: '上传参考图',
         showReferenceImage: '显示参考图',
@@ -89,9 +87,6 @@ const ui = {
         width: '宽度',
         colors: '色数上限',
         colorsHint: '生成时使用的拼豆颜色数量上限；数值越低越简洁，越高越细腻。',
-        generationStyle: '生成风格',
-        generationStyleCartoon: '卡通',
-        generationStyleRealistic: '写实',
         tolerance: '容差',
         toleranceAutoNote: '当前 {v} 是工具自动算出来的最合适值（既能抠干净背景，又不会吃掉主体上的白色）。觉得不合适可以直接拖。',
         toleranceManualNote: '已手动设置，工具不再自动校准。',
@@ -307,12 +302,9 @@ const ui = {
         paramsLocalNote: 'Auto-updates on change',
         autoRefreshConfirm: 'The pattern has been manually edited. Changing parameters will regenerate it and your manual edits will be lost. Continue?',
         copyError: 'Copy details',
-        aiRedrawNeedKey: 'Please enter your API Key first',
         aiRedrawRunning: 'AI is redrawing, about 60-90 seconds…',
         aiRedrawKeyLabel: 'API Key',
         aiRedrawKeyPlaceholder: 'Paste your Ark API Key (starts with ark-)',
-        aiRedrawKeySaved: 'Key saved in this browser, filled automatically next time',
-        aiRedrawFailed: 'AI redraw failed',
         referenceImage: 'Reference Image',
         uploadReferenceImage: 'Upload reference',
         showReferenceImage: 'Show reference',
@@ -330,9 +322,6 @@ const ui = {
         width: 'Width',
         colors: 'Color limit',
         colorsHint: 'Maximum bead colors used in generation; lower is simpler, higher keeps more detail.',
-        generationStyle: 'Style',
-        generationStyleCartoon: 'Cartoon',
-        generationStyleRealistic: 'Realistic',
         tolerance: 'Tolerance',
         toleranceAutoNote: 'The current {v} was auto-calculated by the tool (cleans the background without eating white areas inside the subject). Drag it if you disagree.',
         toleranceManualNote: 'Manually set — the tool will not auto-calibrate any more.',
@@ -1790,10 +1779,17 @@ export default function App() {
                         React.createElement("span", { className: "field-label-with-help" },
                             text.width,
                             React.createElement("span", { className: "help-dot image-help-dot", ...imageHelpProps(text.heightFromRatio) }, "?")),
-                        React.createElement("input", { "aria-label": "Output width", type: "number", min: 8, max: 180, value: widthInput, onChange: (event) => {
-                                const raw = event.target.value;
-                                // 允许中间态为空（用户正在删），但立刻把上一档有效值记下来，
-                                // 这样输入框里永远不会留下一个孤零零的 0，也不会出现 "0xx"
+                        React.createElement("input", { "aria-label": "Output width", type: "range", min: 8, max: 180, step: 1, value: convertWidth, onChange: (event) => {
+                                // 拖滑条：数字跟着走（widthInput 只是编辑态的文本缓冲，这里同步给它）
+                                const next = Number(event.target.value);
+                                setConvertWidth(next);
+                                setWidthInput(String(next));
+                            } }),
+                        React.createElement(ParamNumberField, { ariaLabel: "Output width", value: convertWidth, min: 8, max: 180, text: widthInput, onTextChange: (raw) => {
+                                // 保留下来的「宽度文本态」逻辑：允许中间态为空（用户正在删），
+                                // 非法值立刻退回上一档有效值，去掉多余前导零（"052" → "52"）。
+                                // 注意：这里不再像以前那样边打字边改 convertWidth —— 现在滑条和数字
+                                // 都只在提交（回车/失焦）时生效，Esc 才能真的还原成原值。
                                 if (raw === '') {
                                     setWidthInput('');
                                     return;
@@ -1803,20 +1799,15 @@ export default function App() {
                                     setWidthInput(String(convertWidth));
                                     return;
                                 }
-                                // 去掉多余前导零（例如 "052" → "52"）
-                                const normalized = String(Math.floor(n)).replace(/^0+(?=\d)/, '');
-                                setWidthInput(normalized);
-                                if (n >= 1)
-                                    setConvertWidth(Math.min(400, Math.floor(n)));
-                            }, onFocus: () => setWidthInput(String(convertWidth)), onBlur: () => {
-                                // 失焦时把空值/非法值纠正成一个真实可用的宽度
+                                setWidthInput(String(Math.floor(n)).replace(/^0+(?=\d)/, ''));
+                            }, onCommit: (next) => {
+                                // 失焦/回车时把空值、非法值纠正成一个真实可用的宽度（绝不会是 0）
                                 const fallback = Number.isFinite(convertWidth) && convertWidth >= 1
                                     ? convertWidth
                                     : defaultImportSettings.width;
-                                const n = Number(widthInput);
-                                const final = (widthInput === '' || !Number.isFinite(n) || n < 1)
-                                    ? fallback
-                                    : Math.max(8, Math.min(180, Math.floor(n)));
+                                const final = Number.isFinite(next) && next >= 8
+                                    ? Math.max(8, Math.min(180, Math.floor(next)))
+                                    : fallback;
                                 setConvertWidth(final);
                                 setWidthInput(String(final));
                             } })),
@@ -1825,7 +1816,7 @@ export default function App() {
                             text.colors,
                             React.createElement("span", { className: "help-dot image-help-dot", ...imageHelpProps(text.colorsHint) }, "?")),
                         React.createElement("input", { "aria-label": "Color limit", type: "range", min: 6, max: 48, step: 1, value: maxColors, onChange: (event) => setMaxColors(Number(event.target.value)) }),
-                        React.createElement("strong", null, maxColors)),
+                        React.createElement(ParamNumberField, { ariaLabel: "Color limit", value: maxColors, min: 6, max: 48, onCommit: setMaxColors })),
                     React.createElement("label", { className: "param-row" },
                         React.createElement("span", { className: "field-label-with-help" },
                             text.tolerance,
@@ -1836,7 +1827,11 @@ export default function App() {
                                 // 用户手动调过之后不再自动校准，滑条值就是实际值
                                 setToleranceManual(true);
                             } }),
-                        React.createElement("strong", null, tolerance)),
+                        React.createElement(ParamNumberField, { ariaLabel: "Background tolerance", value: tolerance, min: 0, max: 120, onCommit: (next) => {
+                                setTolerance(next);
+                                // 用数字编辑和拖滑条一样算「手动设置」：否则自动校准会把这个值覆盖掉
+                                setToleranceManual(true);
+                            } })),
                     React.createElement("p", { className: "param-note" }, toleranceManual
                         ? text.toleranceManualNote
                         : text.toleranceAutoNote.replace('{v}', String(tolerance))),

@@ -6,35 +6,6 @@ const PRINT_EXPORT_SCALE = PRINT_EXPORT_PPI / CSS_PIXEL_PPI;
 export function downloadProjectJson(project) {
     downloadBlob(`${safeName(project.name || '\u62fc\u8c46\u7f16\u8f91\u8bb0\u5f55')}-\u7f16\u8f91\u8bb0\u5f55_perler.json`, JSON.stringify(project, null, 2), 'application/json');
 }
-export function downloadUsageCsv(project, usage) {
-    const totalBeads = usage.reduce((sum, row) => sum + row.count, 0);
-    const summaryRows = [
-        ['\u9879\u76ee\u540d\u79f0', project.name],
-        ['\u8272\u53f7\u54c1\u724c', project.activeBrand],
-        ['\u753b\u5e03\u5c3a\u5bf8', `${project.width} x ${project.height}`],
-        ['\u603b\u9897\u6570', totalBeads],
-        ['\u989c\u8272\u6570', usage.length],
-        ['\u6bcf\u5305\u6570\u91cf', `${project.settings.beadsPerPack} \u9897/\u5305`],
-        [],
-    ];
-    const header = ['\u8272\u53f7\u54c1\u724c', '\u8272\u53f7', '\u989c\u8272\u540d\u79f0', 'HEX', '\u6570\u91cf', '\u9884\u8ba1\u5305\u6570'];
-    const rows = usage.map((row) => [
-        project.activeBrand,
-        mappedCode(row.color, project.activeBrand),
-        row.color.name,
-        row.color.hex,
-        row.count,
-        row.packs,
-    ]
-        .map(csvCell)
-        .join(','));
-    const content = [
-        ...summaryRows.map((row) => row.map(csvCell).join(',')),
-        header.map(csvCell).join(','),
-        ...rows,
-    ].join('\n');
-    downloadBlob(`${safeName(project.name || '\u62fc\u8c46\u56fe\u7eb8')}-\u7528\u91cf\u6e05\u5355.csv`, `\ufeff${content}`, 'text/csv;charset=utf-8');
-}
 export function downloadUsageWorkbook(project) {
     const usageLayers = (project.layers ?? []).filter((layer) => layer.includeInUsage);
     const sheets = [

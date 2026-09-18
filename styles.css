@@ -150,14 +150,6 @@ small {
   line-height: var(--line-normal);
 }
 
-.field-hint {
-  display: block;
-  margin-top: 4px;
-  color: var(--text-muted);
-  font-size: var(--font-size-caption);
-  line-height: 1.25;
-}
-
 input:focus-visible,
 select:focus-visible,
 button:focus-visible {
@@ -334,46 +326,6 @@ button:focus-visible {
   border-left: 1px solid var(--line-soft);
 }
 
-.topbar-size-field {
-  display: grid;
-  grid-template-columns: auto 54px;
-  align-items: center;
-  min-height: 30px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-.topbar-size-field span {
-  padding: 0 8px;
-  color: var(--accent);
-  font-size: var(--font-size-body);
-  font-weight: var(--weight-semibold);
-  white-space: nowrap;
-}
-
-.topbar-size-field input {
-  width: 54px;
-  min-height: 28px;
-  border: 0;
-  border-left: 1px solid var(--line-soft);
-  border-radius: 0;
-  background: #ffffff;
-  color: #111827;
-  padding: 0 7px;
-}
-
-.topbar-size-input {
-  width: 54px;
-  min-height: 30px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #ffffff;
-  color: #111827;
-  padding: 0 7px;
-}
-
 .topbar-params > select {
   width: 104px;
   height: 30px;
@@ -403,44 +355,6 @@ button:focus-visible {
 .canvas-apply-button:hover:not(:disabled) {
   border-color: var(--accent);
   background: #e8f5f3;
-}
-
-.topbar-select-field {
-  display: grid;
-  grid-template-columns: auto 82px;
-  align-items: center;
-  min-height: 30px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-.topbar-select-field span {
-  padding: 0 7px;
-  color: var(--text-muted);
-  font-size: var(--font-size-body);
-  font-weight: var(--weight-semibold);
-  white-space: nowrap;
-}
-
-.topbar-select-field select {
-  width: 82px;
-  min-height: 28px;
-  border: 0;
-  border-left: 1px solid var(--line-soft);
-  border-radius: 0;
-  background: #ffffff;
-  padding: 0 6px;
-}
-
-.color-input {
-  width: 36px;
-  height: 30px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #ffffff;
-  padding: 3px;
 }
 
 .size-times {
@@ -1098,10 +1012,9 @@ button:focus-visible {
   min-height: 54px;
 }
 
-.left-panel .image-field-grid input,
-.left-panel .image-field-grid select,
 .left-panel .stacked-field input,
-.left-panel .stacked-field select {
+.left-panel .stacked-field select 
+{
   min-height: 32px;
 }
 
@@ -1159,6 +1072,57 @@ button:focus-visible {
   accent-color: var(--accent);
 }
 
+/* 「点击数字 → 键盘编辑」的数字控件（宽度 / 色数上限 / 容差三行共用）。
+   默认只是一行数字，外观跟原来的 <strong> 一致（强调色 + 右对齐）；
+   点一下才变成输入框。右列固定 34px，两种状态都必须塞得下、不能把三列布局顶开。 */
+.param-row > .param-number {
+  justify-self: stretch;
+  width: 100%;
+  min-width: 0;
+  min-height: 22px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--font-size-small);
+  /* 原来的 <strong> 由 UA 的 bolder 从 600 算到 900，写死 900 才和改前一致 */
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-align: right;
+  cursor: pointer;
+}
+
+.param-row > .param-number:hover {
+  background: var(--accent-soft);
+}
+
+.param-row > .param-number:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.param-row > input.param-number-input {
+  min-width: 0;
+  padding: 0 2px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  /* 34px 的窄列放不下 number 的原生 spinner，藏掉它；键盘上下键仍然可用 */
+  -webkit-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Chrome 里光靠 appearance: textfield 藏不掉 spinner，得针对伪元素再来一遍。
+   spinner 会白占掉 ~13px，把 34px 的列挤到只剩 19px 放数字。 */
+.param-row > input.param-number-input::-webkit-outer-spin-button,
+.param-row > input.param-number-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}
+
 .ref-row-switch > input {
   justify-self: end;
   width: 32px;
@@ -1206,63 +1170,6 @@ button:focus-visible {
   white-space: normal;
 }
 
-.reference-switch {
-  min-height: 32px;
-  padding: 6px 9px;
-  border: 1px solid rgba(190, 177, 154, 0.7);
-  border-radius: 8px;
-  background: rgba(255, 253, 248, 0.64);
-}
-
-.reference-switch input {
-  width: 36px;
-  height: 20px;
-}
-
-.reference-switch input::after {
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-}
-
-.reference-switch input:checked::after {
-  transform: translateX(16px);
-}
-
-.reference-switch span {
-  color: #334155;
-  font-size: var(--font-size-body);
-  font-weight: var(--weight-semibold);
-}
-
-.reference-opacity-field {
-  display: grid;
-  gap: 6px;
-  color: #4b5563;
-  font-size: var(--font-size-small);
-  font-weight: var(--weight-semibold);
-}
-
-.reference-opacity-field input[type='range'] {
-  min-height: 24px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  accent-color: var(--accent);
-}
-
-.reference-adjust-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: stretch;
-}
-
-.reference-adjust-row .reference-switch {
-  margin: 0;
-}
-
 .reference-reset-button {
   min-height: 34px;
   padding: 0 10px;
@@ -1276,15 +1183,6 @@ button:focus-visible {
 .reference-reset-button:hover:not(:disabled) {
   border-color: rgba(23, 101, 106, 0.42);
   color: var(--accent);
-}
-
-.reference-control-grid {
-  display: grid;
-  gap: 8px;
-}
-
-.reference-control-grid .stacked-field {
-  gap: 5px;
 }
 
 .reference-placement-toggle {
@@ -1765,14 +1663,8 @@ button:focus-visible {
   transform: translateY(-50%) rotate(45deg);
 }
 
-.image-field-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 10px;
-}
-
-.image-field-grid label,
-.stacked-field {
+.stacked-field 
+{
   display: grid;
   gap: 6px;
   color: #4b5563;
@@ -1780,10 +1672,9 @@ button:focus-visible {
   font-weight: var(--weight-semibold);
 }
 
-.image-field-grid input,
-.image-field-grid select,
 .stacked-field input,
-.stacked-field select {
+.stacked-field select 
+{
   width: 100%;
   min-height: 34px;
   border: 1px solid var(--line-strong);
@@ -1791,20 +1682,6 @@ button:focus-visible {
   background: #fff;
   color: #111827;
   padding: 0 8px;
-}
-
-.image-field-grid input[type='range'] {
-  min-height: 24px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  accent-color: var(--accent);
-}
-
-.color-input.wide {
-  width: 100%;
-  height: 34px;
-  padding: 4px;
 }
 
 .tool-rail {
@@ -1854,24 +1731,6 @@ button:focus-visible {
   border-radius: 7px;
   background: transparent;
   color: #3f4b52;
-  font-size: var(--font-size-small);
-  font-weight: var(--weight-semibold);
-}
-
-.image-field-grid .image-number-field {
-  grid-template-columns: minmax(0, 1fr) 96px;
-  align-items: center;
-}
-
-.image-range-field > span {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.image-range-field strong {
-  color: var(--text);
   font-size: var(--font-size-small);
   font-weight: var(--weight-semibold);
 }
@@ -1992,8 +1851,8 @@ button:focus-visible {
   white-space: nowrap;
 }
 
-.tool-button.active,
-.segmented button.active {
+.tool-button.active 
+{
   border-color: var(--accent);
   background: var(--accent);
   color: #ffffff;
@@ -2549,18 +2408,6 @@ button:focus-visible {
   transform: translateX(-50%);
 }
 
-.zoom-chip {
-  position: absolute;
-  right: 14px;
-  bottom: 14px;
-  padding: 6px 10px;
-  border: 1px solid rgba(17, 24, 39, 0.12);
-  border-radius: 999px;
-  background: rgba(255, 253, 247, 0.9);
-  color: #374151;
-  font-size: var(--font-size-small);
-}
-
 .right-panel {
   display: flex;
   flex-direction: column;
@@ -2763,10 +2610,6 @@ button:focus-visible {
   text-align: center;
 }
 
-.zoom-chip {
-  display: none;
-}
-
 .palette-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
@@ -2955,17 +2798,6 @@ button:focus-visible {
   color: #ffffff;
 }
 
-.segmented {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-}
-
-.segmented button {
-  min-width: 0;
-  padding: 0 6px;
-}
-
 .checkline {
   display: flex !important;
   flex-direction: row;
@@ -3139,22 +2971,6 @@ button:focus-visible {
   .view-toggle-grid .checkline {
     min-height: 32px;
   }
-}
-
-.estimate {
-  display: grid;
-  gap: 6px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  color: #4b5563;
-  font-size: var(--font-size-body);
-}
-
-.auto-generate-note {
-  color: var(--accent);
-  font-weight: var(--weight-medium);
 }
 
 .full {
@@ -3940,13 +3756,6 @@ button:focus-visible {
   accent-color: var(--accent);
 }
 
-.mini-toggle {
-  min-width: 0;
-  min-height: 32px;
-  padding: 0 9px;
-  font-size: var(--font-size-body);
-}
-
 .mini-icon-toggle {
   display: grid;
   place-items: center;
@@ -3968,8 +3777,8 @@ button:focus-visible {
   stroke-linejoin: round;
 }
 
-.mini-toggle.active,
-.mini-icon-toggle.active {
+.mini-icon-toggle.active 
+{
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
@@ -4128,36 +3937,6 @@ button:focus-visible {
 }
 
 /* ===== AI 閲嶇粯锛圦 鐗堝儚绱犻锛?==== */
-.ai-redraw-toggle {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  cursor: pointer;
-}
-.ai-redraw-toggle input[type="checkbox"] {
-  margin-top: 3px;
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  accent-color: #3677d2;
-  cursor: pointer;
-}
-.ai-redraw-label {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.ai-redraw-label strong {
-  font-size: 13px;
-  color: #222;
-}
-.ai-redraw-label small {
-  font-size: 11px;
-  color: #888;
-  line-height: 1.45;
-}
 .ai-redraw-cost {
   font-style: normal;
   font-weight: normal;
@@ -4237,20 +4016,6 @@ button:focus-visible {
   cursor: not-allowed;
 }
 /* 不花钱的「用当前这张出图纸」 */
-.ai-redraw-reuse {
-  width: 100%;
-  padding: 7px 12px;
-  border: 1px solid #b9cbe6;
-  border-radius: 8px;
-  background: #fff;
-  color: #2b64b4;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background .15s ease, border-color .15s ease;
-}
-.ai-redraw-reuse:hover:not(:disabled) { background: #f2f6fc; border-color: #8fb0dd; }
-.ai-redraw-reuse:disabled { color: #a8b0ba; border-color: #d8dde5; cursor: not-allowed; }
 .ai-redraw-actions small {
   font-size: 11px;
   color: #888;

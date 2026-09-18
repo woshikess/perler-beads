@@ -21,8 +21,6 @@ const styleProfiles = {
 };
 export async function imageFileToBeads(file, options) {
     const image = await loadImage(file);
-    const width = Math.max(1, Math.round(options.width));
-    const height = Math.max(1, Math.round((image.naturalHeight / image.naturalWidth) * width));
     const sourceWidth = Math.max(1, image.naturalWidth);
     const sourceHeight = Math.max(1, image.naturalHeight);
     const canvas = document.createElement('canvas');
@@ -34,6 +32,23 @@ export async function imageFileToBeads(file, options) {
     context.imageSmoothingEnabled = true;
     context.drawImage(image, 0, 0, sourceWidth, sourceHeight);
     const data = context.getImageData(0, 0, sourceWidth, sourceHeight).data;
+    return imageDataToBeads(data, sourceWidth, sourceHeight, options);
+}
+/**
+ * 出图管线的**纯逻辑主体**（不碰 DOM、不碰 canvas）。
+ *
+ * 从 `imageFileToBeads` 里抽出来的唯一目的是：验证脚本要在 Node 里
+ * 用**同一条真实管线**跑（而不是另写一份算法），而 Node 里没有 `Image` / `canvas`。
+ * 解码那一步留在 `imageFileToBeads`，这里只吃 RGBA 像素。
+ *
+ * 抽取是纯粹的搬移：`imageFileToBeads` 现在只负责解码 + 转发，行为与抽取前逐位一致。
+ * （当年用来证明这件事的 A/B 脚本 `工具脚本/_verify_ab_refactor.cjs` 已随 A/B 实验一起删除。）
+ *
+ * 目前只有同文件的 `imageFileToBeads` 调用它，所以不再 export。
+ */
+function imageDataToBeads(data, sourceWidth, sourceHeight, options) {
+    const width = Math.max(1, Math.round(options.width));
+    const height = Math.max(1, Math.round((sourceHeight / sourceWidth) * width));
     const activePalette = options.palette ?? palette;
     const profile = styleProfiles[options.generationStyle ?? 'cartoon'];
     const requestedSpeckleStrength = options.speckleReduction ?? 0;
@@ -680,19 +695,6 @@ function protectEyeHighlights(cells, data, sourceWidth, sourceHeight, width, hei
         next[index] = highlightColor.id;
     });
     return next;
-}
-/** 仅供验证脚本使用：查看自动校准把容差调成了多少 */
-export function diagnoseTolerance(data, sourceWidth, sourceHeight, requestedTolerance) {
-    const bg = estimateBackgroundColor(data, sourceWidth, sourceHeight);
-    return { backgroundColor: bg, effective: calibrateTolerance(data, sourceWidth, sourceHeight, bg, requestedTolerance) };
-}
-/** 仅供验证脚本使用：查看检测器实际认定的高光点 */
-export function diagnoseEyeHighlights(data, sourceWidth, sourceHeight) {
-    return detectEyeHighlights(data, sourceWidth, sourceHeight);
-}
-/** 仅供验证脚本使用：直接调用高光保护，方便做最小单元测试 */
-export function __testProtectEyeHighlights(cells, data, sourceWidth, sourceHeight, width, height, candidates, activePalette) {
-    return protectEyeHighlights(cells, data, sourceWidth, sourceHeight, width, height, candidates, activePalette);
 }
 // 在原图全分辨率像素上找高光：亮度接近白、被一圈明显更暗的像素包围、面积很小。
 // 面积上限 + 暗环判定一起把「白衣服 / 白背景 / 大片亮区」挡在高光之外。
