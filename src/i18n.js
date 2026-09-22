@@ -308,6 +308,7 @@ export const ui = {
             material: '图片',
             reference: '参考',
             palette: '图纸',
+            recolor: '改色',
         },
     },
     en: {
@@ -577,6 +578,7 @@ export const ui = {
             material: 'Image',
             reference: 'Reference',
             palette: 'Pattern',
+            recolor: 'Recolor',
         },
     },
 };

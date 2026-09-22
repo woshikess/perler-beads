@@ -353,7 +353,7 @@ export default function RightPanel(props) {
             React.createElement("button", { className: rightTab === 'palette' ? 'active' : '', role: "tab", "aria-selected": rightTab === 'palette', onClick: () => setRightTab('palette') }, text.palette),
             React.createElement("button", { className: rightTab === 'usage' ? 'active' : '', role: "tab", "aria-selected": rightTab === 'usage', onClick: () => setRightTab('usage') }, text.usage))),
         !drawerMode && rightTab === 'palette' && (React.createElement(PaletteBody, { text: text, selectedColor: selectedColor, selectedColorId: selectedColorId, displayCode: displayCode, displayName: displayName, recentColors: recentColors, selectColor: selectColor, paletteGroups: paletteGroups, paletteGroup: paletteGroup, setPaletteGroup: setPaletteGroup, visiblePalette: visiblePalette, brandSelect: brandSelect })),
-        (drawerMode || rightTab === 'usage') && (React.createElement("section", { className: "panel-section panel-tab-body usage-section" },
+        rightTab === 'usage' && (React.createElement("section", { className: "panel-section panel-tab-body usage-section" },
             React.createElement("h2", null, text.usage),
             React.createElement("div", { className: "usage-overview" },
                 React.createElement("div", null,
@@ -459,6 +459,6 @@ export default function RightPanel(props) {
                     hoverCell.x + 1,
                     " - ",
                     getColor(hoverCell.colorId)?.primaryCode ?? text.empty)) : (React.createElement("span", null, text.hoverBoard))))),
-        drawerMode && paramsCard && React.createElement("div", { className: "params-drawer-slot" }, paramsCard)));
+        drawerMode && rightTab === 'palette' && paramsCard && React.createElement("div", { className: "params-drawer-slot" }, paramsCard)));
 }
 //# sourceMappingURL=RightPanel.js.map

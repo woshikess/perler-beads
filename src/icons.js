@@ -217,6 +217,14 @@ export function PanelEntryIcon({ id }) {
             React.createElement("circle", { cx: "8.5", cy: "8", r: "1.1" }),
             React.createElement("path", { d: "M6 20h12" })));
     }
+    if (id === 'recolor') {
+        // 「改色」（B27）= 调色盘 —— B21 把这个图标腾出来了（「图纸」那条改用了格子纸）
+        return (React.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" },
+            React.createElement("path", { d: "M12 3.5c4.7 0 8.5 3.3 8.5 7.4 0 2.6-2 4.3-4.6 4.3h-1.6c-.9 0-1.6.7-1.6 1.6 0 .5.2.9.5 1.3.2.3.3.6.3 1 0 .8-.7 1.4-1.5 1.4-4.7 0-8.5-3.8-8.5-8.5S7.3 3.5 12 3.5z" }),
+            React.createElement("circle", { cx: "8.6", cy: "10", r: "1.2" }),
+            React.createElement("circle", { cx: "12", cy: "7.6", r: "1.2" }),
+            React.createElement("circle", { cx: "15.4", cy: "10", r: "1.2" })));
+    }
     /*
      * 「图纸」（B21 前叫「颜色」）= **格子纸**。
      *

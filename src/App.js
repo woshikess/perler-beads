@@ -66,7 +66,10 @@ const tools = [
 const PANEL_ENTRIES = [
     { id: 'material', panel: 'left', section: 'material' },
     { id: 'reference', panel: 'left', section: 'reference' },
-    { id: 'palette', panel: 'right', section: null },
+    // B27（用户 2026-09-22）：右抽屉**拆成两个条目** —— 「图纸」= 视图/格子/参数调节；「改色」= 用量与改色。
+    //   两个都开同一个右抽屉，靠 `rightTab` 决定抽屉里显示哪一段（`isOpen` 也要一起比，否则两个条目会同时高亮）。
+    { id: 'palette', panel: 'right', section: null, rightTab: 'palette' },
+    { id: 'recolor', panel: 'right', section: null, rightTab: 'usage' },
 ];
 /*
  * ⚠️ 这里原来有一个 `railRowOf(id, panelLayout)`：它算"这个工具在 `.tool-rail` 的第几行"，
@@ -2442,7 +2445,8 @@ export default function App() {
         React.createElement("aside", { className: "tool-rail", ref: railRef },
             panelLayout && PANEL_ENTRIES.map((entry) => {
                 const isOpen = openPanel === entry.panel
-                    && (entry.section === null || leftSection === entry.section);
+                    && (entry.section === null || leftSection === entry.section)
+                    && (entry.rightTab === undefined || rightTab === entry.rightTab);
                 return (React.createElement("button", { key: entry.id, className: isOpen ? 'tool-button panel-entry active' : 'tool-button panel-entry', "data-panel-entry": entry.id, "aria-label": text.panelEntries[entry.id], title: text.panelEntries[entry.id], "aria-expanded": isOpen, type: "button", onClick: () => {
                         // 「点哪个出哪个」：同一条目再点一次 = 收起；否则打开目标面板并切到那一段。
                         if (isOpen) {
@@ -2456,6 +2460,9 @@ export default function App() {
                         closeAllToolOptions();
                         if (entry.section !== null)
                             setLeftSection(entry.section);
+                        // B27：右抽屉的两个条目靠 `rightTab` 选段（图纸=palette / 改色=usage）
+                        if (entry.rightTab)
+                            setRightTab(entry.rightTab);
                         setOpenPanel(entry.panel);
                     } },
                     React.createElement(PanelEntryIcon, { id: entry.id }),

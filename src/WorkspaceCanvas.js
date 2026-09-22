@@ -46,7 +46,7 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
      */
     const LONG_PRESS_MS = 200; // 加上手势层 `deferTouchStart` 的 140ms 前摇 ≈ 340ms 总时长
     const LONG_PRESS_MOVE_TOL = 12; // 位移超过它就视为"拖动"，不触发长按
-    const LOUPE_SIZE = 124;
+    const LOUPE_SIZE = 124; // 桌面/iPad 的镜子边长（手机档在渲染处按画布可用宽缩到 96，见 B26）
     const LOUPE_ZOOM = 4;
     const [loupe, setLoupe] = useState(null);
     const loupeCanvasRef = useRef(null);
@@ -68,6 +68,29 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
         loupePressRef.current.active = false;
         loupePressRef.current.fired = false;
         loupePressRef.current.cell = null;
+    };
+    /**
+     * B25（用户 2026-09-22）：**粘贴（触摸）的长按落位预览**。
+     * 与 B18 吸管镜子共用同一套参数（`LONG_PRESS_MS` / `LONG_PRESS_MOVE_TOL`）⇒ 两个工具的手感一致：
+     * 短按 = 老手感（按下即落）、长按 = 先预览、松手才落。
+     */
+    const pastePressRef = useRef({
+        timer: null,
+        startX: 0,
+        startY: 0,
+        cell: null,
+        pointerId: -1,
+        active: false,
+        fired: false,
+    });
+    const clearPastePress = () => {
+        if (pastePressRef.current.timer !== null) {
+            clearTimeout(pastePressRef.current.timer);
+            pastePressRef.current.timer = null;
+        }
+        pastePressRef.current.active = false;
+        pastePressRef.current.fired = false;
+        pastePressRef.current.cell = null;
     };
     const pointerRef = useRef({
         drawing: false,
@@ -397,6 +420,33 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
         if (tool === 'clipboard' && clipboardPhase === 'paste') {
             if (!clipboardPattern)
                 return;
+            /*
+             * B25（用户 2026-09-22）：「iPad 端的粘贴逻辑应该为 **长按后预览显示放置位置、松手后再确定放到哪**，
+             * 现在是一点它就直接放下了 ⇒ 位置容易错」。
+             * 触摸：按下**先不落图**，只起长按计时器（叠加手势层 140ms 前摇 ⇒ 手感约 0.34s，与 B18 吸管镜子同一套）；
+             *   到点且没怎么动 ⇒ 打开落位预览（复用 `drawClipboardPatternPreview`，由 `hoverPoint` 驱动）并跟手；
+             *   松手才落图，落在**最后指向**的那一格；短按仍按老手感落在**按下**那一格。
+             * 鼠标：**一个字没改**（按下即落）。
+             */
+            if (isTouch) {
+                clearPastePress();
+                pastePressRef.current.startX = clientX;
+                pastePressRef.current.startY = clientY;
+                pastePressRef.current.cell = { x: cell.x, y: cell.y };
+                pastePressRef.current.pointerId = pointerId;
+                pastePressRef.current.active = true;
+                pastePressRef.current.fired = false;
+                pastePressRef.current.timer = window.setTimeout(() => {
+                    pastePressRef.current.timer = null;
+                    if (!pastePressRef.current.active)
+                        return;
+                    pastePressRef.current.fired = true;
+                    const p = canvasToGridPoint(pastePressRef.current.startX, pastePressRef.current.startY, false);
+                    if (p)
+                        setHoverPoint(p);
+                }, LONG_PRESS_MS);
+                return;
+            }
             const next = pasteClipboardPattern(getActiveLayerCells(project), project.width, project.height, clipboardPattern, cell.x, cell.y);
             onCommitStart();
             onCellsChange(next);
@@ -528,6 +578,23 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
             }));
             return;
         }
+        /*
+         * B25：粘贴的长按落位预览 —— 已进入预览态就**只跟手**（更新 `hoverPoint` 让落位预览跟着走），
+         * 绝不能落到下面的落笔/平移逻辑里去；还没到点时移动超过容差 ⇒ 判为拖动、取消这次长按
+         * （松手按短按处理 = 落在按下那一格，与改动前一致）。
+         */
+        if (pastePressRef.current.fired) {
+            const p = canvasToGridPoint(event.clientX, event.clientY, false);
+            if (p)
+                setHoverPoint(p);
+            return;
+        }
+        if (pastePressRef.current.timer !== null
+            && (Math.abs(event.clientX - pastePressRef.current.startX) > LONG_PRESS_MOVE_TOL
+                || Math.abs(event.clientY - pastePressRef.current.startY) > LONG_PRESS_MOVE_TOL)) {
+            clearTimeout(pastePressRef.current.timer);
+            pastePressRef.current.timer = null;
+        }
         if (loupePressRef.current.timer !== null
             && (Math.abs(event.clientX - loupePressRef.current.startX) > LONG_PRESS_MOVE_TOL
                 || Math.abs(event.clientY - loupePressRef.current.startY) > LONG_PRESS_MOVE_TOL)) {
@@ -644,6 +711,28 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
                     const colorId = getTopVisibleColor(project, cell.y * project.width + cell.x);
                     if (colorId)
                         onPickColor(colorId);
+                }
+            }
+        }
+        /*
+         * B25：粘贴（触摸）的"到底落在哪一格"在这里决定 ——
+         *   长按预览过（`fired`）⇒ 落在**松手时最后指向**的那一格（拿不到格子就退回按下那一格）；
+         *   短按 ⇒ 落在**按下那一格**，与改动前的手感完全一致；
+         *   `cancelled`（`pointercancel`，双指手势介入等）⇒ 只收预览、**不落图**。
+         */
+        if (isTouch && tool === 'clipboard' && clipboardPhase === 'paste' && pastePressRef.current.active) {
+            const fired = pastePressRef.current.fired;
+            const downCell = pastePressRef.current.cell;
+            clearPastePress();
+            setHoverPoint(null);
+            if (!cancelled && !gestures.isGesturing() && clipboardPattern && canEdit) {
+                const released = canvasToGridPoint(event.clientX, event.clientY, false)?.cell ?? null;
+                const cell = (fired ? (released ?? downCell) : downCell);
+                if (cell) {
+                    const next = pasteClipboardPattern(getActiveLayerCells(project), project.width, project.height, clipboardPattern, cell.x, cell.y);
+                    onCommitStart();
+                    onCellsChange(next);
+                    onPastePattern();
                 }
             }
         }
@@ -937,13 +1026,20 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
             const wrap = wrapperRef.current;
             const w = wrap?.clientWidth ?? 0;
             const h = wrap?.clientHeight ?? 0;
+            /*
+             * B26（用户 2026-09-22 反馈的手机端 P1 之一）：**镜子边长按可用宽度缩**。
+             * 124px 在 390 宽的手机上占 **32%** 视口宽（实测），偏大、挡视野；
+             * 判据用**画布可用宽**而不是媒体查询：与"这是谁的设备"无关，窄抽屉/窄窗口一样受益。
+             * iPad（画布 940）仍是 124 —— B18 门禁对 iPad 断言了 124，这条不破坏它。
+             */
+            const loupeSize = w > 0 && w < 520 ? 96 : 124;
             const x = loupe.clientX - (wrap?.getBoundingClientRect().left ?? 0);
             const y = loupe.clientY - (wrap?.getBoundingClientRect().top ?? 0);
-            const left = Math.min(Math.max(8, x - LOUPE_SIZE / 2), Math.max(8, w - LOUPE_SIZE - 8));
-            const above = y - LOUPE_SIZE - 24;
-            const top = above >= 8 ? above : Math.min(Math.max(8, y + 28), Math.max(8, h - LOUPE_SIZE - 8));
-            return (React.createElement("div", { className: "eyedropper-loupe", style: { left: `${Math.round(left)}px`, top: `${Math.round(top)}px`, width: LOUPE_SIZE, height: LOUPE_SIZE } },
-                React.createElement("canvas", { ref: loupeCanvasRef, width: LOUPE_SIZE, height: LOUPE_SIZE }),
+            const left = Math.min(Math.max(8, x - loupeSize / 2), Math.max(8, w - loupeSize - 8));
+            const above = y - loupeSize - 24;
+            const top = above >= 8 ? above : Math.min(Math.max(8, y + 28), Math.max(8, h - loupeSize - 8));
+            return (React.createElement("div", { className: "eyedropper-loupe", style: { left: `${Math.round(left)}px`, top: `${Math.round(top)}px`, width: loupeSize, height: loupeSize } },
+                React.createElement("canvas", { ref: loupeCanvasRef, width: loupeSize, height: loupeSize }),
                 React.createElement("span", { className: "eyedropper-loupe-code" }, loupeCode)));
         })(),
         React.createElement("div", { className: "board-chip" },
