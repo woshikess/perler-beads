@@ -1,3 +1,5 @@
+// W0.3：601 亮度的定义收敛到 ./luminance（原先本文件与 exporters.ts 各有一份逐字相同的副本）
+import { luminance601 as luminance } from './luminance.js';
 import { colorDistance, nearestPaletteColor, palette } from './palette.js';
 const styleProfiles = {
     cartoon: {
@@ -933,9 +935,8 @@ function pickHighlightColor(candidates, activePalette) {
 function relativeLuminance(rgb) {
     return luminance(rgb) / 255;
 }
-function luminance(rgb) {
-    return 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2];
-}
+// W0.3：`function luminance` 已搬到 ./luminance（导出名 luminance601）。
+// 本文件里的调用点一个字未改，靠上面的 `luminance601 as luminance` 别名接住。
 function colorChroma(rgb) {
     return Math.max(...rgb) - Math.min(...rgb);
 }

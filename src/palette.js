@@ -327,6 +327,19 @@ ZG6,#94BFE2
 ZG7,#E2A9D2
 ZG8,#AB91C0
 `;
+// ---------------------------------------------------------------- 默认色板（MARD）
+//
+// ⚠️ W3.3b（多品牌色号）**没有动这里一个字节的数据与选色路径**：
+//     `rawColorsCsv` / `rawExtendedColorsCsv` 的文字、`mard-<code>` 的 id 生成规则、
+//     `basicPalette` 221 / `completePalette` 291 的顺序与 rgb、`paletteVersion` 全部保持原样。
+//     品牌注册表与 Artkal 色板在 `src/brands.ts`（它 import 本文件，反向不成立 ⇒ 无循环依赖）。
+//
+// ⚠️ 本文件对外的导出名集合是**冻结的**：`工具脚本\_verify_nearest_strategy.cjs` 第 5 节会
+//     逐字断言 `Object.keys(export)` 恰好是下面这 13 个。新增品牌功能请加到 `src/brands.ts`，
+//     不要往本文件加导出（否则那条既有门禁会红）。
+//     ⚠️ W3.3c 唯一的例外：`setExtraPaletteColors`（见本文件 `getColor` 下方）。
+//     它是换品牌时让 `getColor` 认得出别的品牌色 id 所必需的，已同步更新那条门禁的期望清单
+//     （13 → 14 项），并保持 `paletteVersion` / `basicPalette` / `completePalette` / 距离公式逐字不变。
 export const paletteVersion = 'mard-291-v1';
 function parseRawColors(csv) {
     return csv
@@ -368,7 +381,27 @@ export function hexToRgb(hex) {
 export function getColor(id) {
     if (!id)
         return undefined;
-    return completePalette.find((color) => color.id === id);
+    const own = completePalette.find((color) => color.id === id);
+    if (own)
+        return own;
+    return extraColorRegistry.get(id);
+}
+// ------------------------------------------------- 附加品牌色（W3.3c 换品牌用）
+//
+// 为什么需要它：换到别的品牌之后，格子里的颜色 id 变成那个品牌的 id，
+// 而 `getColor` 的原始口径只认 MARD 的 `completePalette`（291）——
+// 那样 `getColor(artkalId)` 会返回 undefined，用量表 / 画布 / 导出全部拿不到颜色。
+// **又因为本文件对外的导出名集合被 `_verify_nearest_strategy.cjs` 逐字断言冻结**，
+// 所以这里用「注册表 + 一个 setter」的方式扩展，而不是把 `brands.ts` 的色板 import 进来
+// （那还会造成 palette ↔ brands 循环依赖）。
+//
+// ⚠️ 空表时 `getColor` 的行为与改动前**逐字一致**：先线性查 MARD 的 291 色，查不到才看这张表。
+// 注册表按 id 去重，重复注册不会让表变大。
+const extraColorRegistry = new Map();
+export function setExtraPaletteColors(colors) {
+    extraColorRegistry.clear();
+    for (const color of colors)
+        extraColorRegistry.set(color.id, color);
 }
 // ---------------------------------------------------------- 最近色查找策略
 //

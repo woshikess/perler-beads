@@ -23,12 +23,17 @@
     -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
     "Segoe UI", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial,
     sans-serif;
+  /* 字号台阶（R6 / W5 第 2 阶段）——**最小台阶 11px 是硬下限**（用户裁决⑬「字号最小 ≥11px」）。
+     台阶之间是 1px 的细步进，故意保持保守（"台阶太平"这个诊断没有一手权威依据，
+     所以本轮**只做两件事**：① 把所有 < 11px 的散落值抬到台阶底；② 把裸 px 换成 token）。
+     ⚠️ 有没有 `--font-size-tiny`：**没有**（历史上有过 3 条 `var(--font-size-tiny)` 引用，
+     但该变量全仓库从未定义 ⇒ 那 3 条声明一直是无效的，本阶段已整条删除，见报告任务 G）。
+     `--font-size-display` 已删除（W7 决定：全仓库无消费方，git grep 0 命中）。 */
   --font-size-caption: 11px;
   --font-size-small: 12px;
   --font-size-body: 13px;
   --font-size-control: 14px;
   --font-size-title: 15px;
-  --font-size-display: 20px;
   --line-tight: 1.12;
   --line-normal: 1.35;
   --weight-regular: 400;
@@ -51,6 +56,8 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  /* W1：iOS 地址栏收缩时 100vh 会被吃掉一截，补 dvh；上一行是回退 */
+  min-height: 100dvh;
   background: var(--bg);
 }
 
@@ -59,6 +66,7 @@ body {
   place-content: center;
   gap: 12px;
   min-height: 100vh;
+  min-height: 100dvh;
   padding: 32px;
   color: var(--text);
   text-align: center;
@@ -119,9 +127,11 @@ button {
     transform 80ms ease;
 }
 
+@media (hover: hover) {
 button:hover:not(:disabled) {
   border-color: #9b8f80;
   background: #fffaf0;
+}
 }
 
 button:disabled {
@@ -135,9 +145,11 @@ button:disabled {
   color: #ffffff;
 }
 
+@media (hover: hover) {
 .primary:hover:not(:disabled) {
   border-color: var(--accent-hover);
   background: var(--accent-hover);
+}
 }
 
 .hidden-input {
@@ -175,21 +187,48 @@ button:focus-visible {
 }
 
 .app-shell {
+  /* `position: relative` 的唯一用途：给 `.tool-options-layer` 提供包含块（覆盖层是它的绝对定位子元素）。
+     已核对：壳内其余绝对/固定定位元素都不受影响 —— `.floating-help-tooltip` 与 `.error-banner`
+     是 `position: fixed`（包含块是视口，与这里无关），画布上的浮标在 `.workspace`（自身 relative）里，
+     抽屉与遮罩在窄档是 `position: fixed`。桌面/平板档 `env(safe-area-*)` 恒为 0 ⇒ 包含块与视口逐像素相同。 */
+  position: relative;
   display: grid;
   grid-template-columns: 300px 84px minmax(0, 1fr) 360px;
   grid-template-rows: minmax(66px, auto) minmax(0, 1fr);
   width: 100vw;
+  /* W1：先 vh 回退，再 dvh；并补 iOS 安全区（桌面 env() 恒为 0 ⇒ 桌面布局不变） */
+  height: 100vh;
   height: 100dvh;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
   overflow: hidden;
 }
 
+/* ============================================================================
+   W1 顶栏重构：**六个槽位**（决策3 / 决策16 / HIG `Toolbars`）
+
+   DOM 顺序 = 视觉顺序，不再有 `order` / `display:contents` / `::after` 强制换行 /
+   按断点硬凑的行列数：
+     [leading] 侧边栏开关   [title] 品牌   [document] 撤销·重做
+     [params] 画布尺寸     [actions] 导出组   [trailing] GitHub·语言
+
+   · 槽位**固定、内容可少可多**：空槽位自己塌成 0 宽（`display:none`）。
+   · 组内间隙 8px；**图标组 ↔ 文字组之间是固定 16px**（HIG「Keep actions with text
+     labels separate」）：`title→document` 与 `document→params` 各吃一个固定间隙。
+   · 溢出优先级（决策16，Material `ifRoom`）：`document` **永不降级**；
+     `actions` 放不下时进「更多」（判据在 App.tsx 的 useLayoutEffect 里**实测**，
+     不是断点）；**桌面不主动藏**。
+   ========================================================================== */
 .topbar {
+  --topbar-slot-gap: 8px;
+  --topbar-group-gap: 16px; /* 固定的"图标组 ↔ 文字组"间隙 */
   grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: 300px 84px minmax(0, 1fr) 360px;
+  display: flex;
+  flex-wrap: nowrap;
   align-items: center;
-  column-gap: 0;
-  row-gap: 8px;
+  column-gap: var(--topbar-slot-gap);
   min-width: 0;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line-strong);
@@ -197,6 +236,112 @@ button:focus-visible {
     linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.08)),
     var(--chrome);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
+}
+
+.topbar-slot {
+  display: flex;
+  align-items: center;
+  gap: var(--topbar-slot-gap);
+  min-width: 0;
+}
+
+/* 第 3 批：`.topbar-slot--leading { flex: 0 0 auto }` 已删除（槽位本身不再渲染）。 */
+
+.topbar-slot--title {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.topbar-slot--document {
+  flex: 0 0 auto;
+  /* 固定间隙：算上父级 `column-gap` 之后**正好**是 `--topbar-group-gap`（16px），
+     不是 8+16=24px —— 实测值写进证据（1600px：title→document = 16.00px）。 */
+  margin-left: calc(var(--topbar-group-gap) - var(--topbar-slot-gap));
+}
+
+/* 画布尺寸组**永不被压缩**（这就是以前"文字被裁"的结构性修法：
+   不靠断点、不靠 min-width 覆盖，而是让控件按自然宽度占位；
+   放不下由下面的 ifRoom 处理，不由"把字挤没"处理）。 */
+.topbar-slot--params {
+  flex: 0 0 auto;
+  margin-left: calc(var(--topbar-group-gap) - var(--topbar-slot-gap));
+}
+
+.topbar-slot--actions {
+  position: relative;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.topbar-slot--trailing {
+  flex: 0 0 auto;
+}
+
+/* 第 3 批：`.topbar-drawer-toggles`（开关宿主容器）两条规则已删除 ——
+   宿主 `<div data-topbar-drawer-toggles>` 与整个 `leading` 槽位都不再渲染。 */
+
+/* 导出组的外壳：**按自然宽度**，绝不被挤扁（挤扁 = 文字被裁） */
+.topbar-actions-wrap {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+/* 「更多」按钮只在整个导出组放不下时才出现（由 App 的实测结果驱动 `.is-actions-collapsed`）*/
+.topbar-more-button {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(190, 177, 154, 0.72);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #1f2937;
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.topbar.is-actions-collapsed .topbar-more-button {
+  display: inline-flex;
+}
+
+/* 折叠态：关着「更多」时导出组不在场（也不参与测量 —— 测量前会先摘掉这个类） */
+.topbar.is-actions-collapsed:not(.is-more-open) .topbar-actions-wrap {
+  display: none;
+}
+
+/* 折叠态 + 开着「更多」：导出组变成一个贴着按钮的竖排浮层（同一个 ExportPanel 实例，
+   没有复制任何产品逻辑）*/
+.topbar.is-actions-collapsed.is-more-open .topbar-actions-wrap {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 253, 248, 0.98);
+  box-shadow: 0 14px 30px rgba(17, 24, 39, 0.18);
+}
+
+.topbar.is-actions-collapsed.is-more-open .export-actions {
+  flex-direction: column;
+  align-items: stretch;
+  width: auto;
+  max-width: min(320px, calc(100vw - 24px));
+  overflow: visible;
+}
+
+.topbar.is-actions-collapsed.is-more-open .export-actions > * {
+  flex: 0 0 auto;
 }
 
 .brand-lockup {
@@ -245,29 +390,8 @@ button:focus-visible {
   min-width: 0;
 }
 
-.topbar-workspace {
-  grid-column: 3;
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 0;
-}
-
-.topbar-command-zone {
-  display: flex;
-  flex-wrap: nowrap;
-  flex: 1 1 auto;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  min-width: 0;
-  margin-left: 0;
-}
-
 .topbar-params {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   gap: 6px;
   height: 38px;
   padding: 4px 5px 4px 9px;
@@ -352,9 +476,11 @@ button:focus-visible {
   font-weight: var(--weight-semibold);
 }
 
+@media (hover: hover) {
 .canvas-apply-button:hover:not(:disabled) {
   border-color: var(--accent);
   background: #e8f5f3;
+}
 }
 
 .size-times {
@@ -373,7 +499,7 @@ button:focus-visible {
 }
 
 .topbar-actions {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   flex-wrap: nowrap;
   gap: 4px;
   min-height: 38px;
@@ -384,18 +510,43 @@ button:focus-visible {
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.72) inset;
 }
 
+/* ⚠️ 这里以前有一条 `.topbar-actions button { min-width: 0 }`。
+   它的特异性 (0,1,1) **高于** `.project-action-button { min-width: 46px }` (0,1,0)，
+   于是按钮可以被压到 46px 以下、文字被裁 —— 这就是"文字被裁"的**根因**（不是断点不对）。
+   结构性修法：控件一律 `flex: 0 0 auto` + `white-space: nowrap`（按自然宽度占位），
+   放不下由 ifRoom 的「更多」接手；**不再用"把字挤没"来吸收溢出**。 */
 .topbar-actions button {
-  min-width: 0;
+  flex: 0 0 auto;
   padding-inline: 9px;
   white-space: nowrap;
   background: #ffffff;
 }
 
-.project-actions {
-  gap: 5px;
-  padding-inline: 5px;
-  background: rgba(255, 253, 248, 0.72);
+/* document 槽位：只剩撤销/重做两个**图标**按钮。
+   图标组与文字组之间那个 16px 固定间隙由 `.topbar-slot--document/--params` 的
+   `margin-left` 给（见文件顶部槽位段）。 */
+.document-actions {
+  gap: 4px;
 }
+
+.document-actions .history-action {
+  min-width: 34px;
+  padding-inline: 8px;
+}
+
+.document-actions .history-action svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* `.project-actions`（原来"新建/清空/撤销/重做"那一组的外框）随那两个按钮一起删除；
+   现在 document 槽位用 `.document-actions`。 */
 
 .project-action-button {
   min-width: 46px;
@@ -425,12 +576,8 @@ button:focus-visible {
   opacity: 1;
 }
 
-.project-action-divider {
-  width: 1px;
-  height: 18px;
-  margin: 0 2px;
-  background: rgba(190, 177, 154, 0.58);
-}
+/* `.project-action-divider` 已随「新建/清空」删除（DOM 里也没有了）——
+   document 槽位现在只有两个图标按钮，不再需要分隔线。 */
 
 .export-actions button {
   padding-inline: 8px;
@@ -463,10 +610,12 @@ button:focus-visible {
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.22) inset;
 }
 
+@media (hover: hover) {
 .export-action-button.primary-action:hover:not(:disabled) {
   border-color: #114f54;
   background: #114f54;
   color: #ffffff;
+}
 }
 
 .print-export-menu {
@@ -561,11 +710,13 @@ button:focus-visible {
   stroke-linejoin: round;
 }
 
+@media (hover: hover) {
 .print-export-close:hover:not(:disabled) {
   border-color: rgba(156, 47, 40, 0.32);
   background:
     linear-gradient(180deg, rgba(255, 250, 244, 0.98), rgba(255, 240, 238, 0.92));
   color: #9c2f28;
+}
 }
 
 .export-text-field {
@@ -618,10 +769,12 @@ button:focus-visible {
   color: #ffffff;
 }
 
+@media (hover: hover) {
 .export-submit-button:hover:not(:disabled) {
   border-color: var(--accent-hover);
   background: var(--accent-hover);
   color: #ffffff;
+}
 }
 
 .switch-row {
@@ -665,8 +818,6 @@ button:focus-visible {
 }
 
 .topbar-right {
-  grid-column: 4;
-  justify-self: end;
   display: flex;
   justify-content: flex-end;
   align-items: center;
@@ -698,9 +849,11 @@ button:focus-visible {
     color 120ms ease;
 }
 
+@media (hover: hover) {
 .github-link:hover {
   background: rgba(255, 253, 248, 0.62);
   color: var(--accent);
+}
 }
 
 .github-link svg {
@@ -741,9 +894,10 @@ button:focus-visible {
 }
 
 @media (max-width: 1500px) {
+  /* W1：这里原来还有 `.topbar{grid-template-columns:...}` 与
+     `.topbar-workspace,.topbar-command-zone{gap}` 两条 —— 都是**按断点硬凑行列**的产物，
+     槽位化之后不存在了（现在只有槽位自己的间隙规则）。 */
   .topbar {
-    grid-template-columns: minmax(178px, 230px) 72px minmax(0, 1fr) 360px;
-    column-gap: 0;
     padding-inline: 10px;
   }
 
@@ -767,11 +921,6 @@ button:focus-visible {
   .logo-mark {
     width: 34px;
     height: 34px;
-  }
-
-  .topbar-workspace,
-  .topbar-command-zone {
-    gap: 8px;
   }
 
   .topbar-params {
@@ -923,7 +1072,7 @@ button:focus-visible {
   align-items: center;
   gap: 5px;
   color: #4b5563;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: var(--weight-semibold);
 }
 
@@ -933,7 +1082,7 @@ button:focus-visible {
   border-radius: 999px;
   background: rgba(54, 119, 210, 0.12);
   color: #2b64b4;
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   line-height: 15px;
 }
 
@@ -961,8 +1110,10 @@ button:focus-visible {
   object-fit: cover;
 }
 
+@media (hover: hover) {
 .ai-history-item:hover:not(:disabled) {
   border-color: #3677d2;
+}
 }
 
 .ai-history-item.active {
@@ -992,7 +1143,7 @@ button:focus-visible {
   border-radius: 4px;
   background: rgba(17, 24, 39, 0.62);
   color: #fff;
-  font-size: 9px;
+  font-size: var(--font-size-caption);
   line-height: 12px;
 }
 
@@ -1004,7 +1155,7 @@ button:focus-visible {
 .ai-redraw-bg-field select,
 .ai-redraw-key input {
   min-height: 28px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 /* 左栏整体更紧凑：上传区矮一点，输入框矮一点 */
@@ -1095,8 +1246,10 @@ button:focus-visible {
   cursor: pointer;
 }
 
+@media (hover: hover) {
 .param-row > .param-number:hover {
   background: var(--accent-soft);
+}
 }
 
 .param-row > .param-number:focus-visible {
@@ -1157,7 +1310,7 @@ button:focus-visible {
 .ref-row-actions .reference-placement-toggle button {
   min-height: 26px;
   padding: 0 4px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   white-space: nowrap;
 }
 
@@ -1180,9 +1333,11 @@ button:focus-visible {
   font-weight: var(--weight-semibold);
 }
 
+@media (hover: hover) {
 .reference-reset-button:hover:not(:disabled) {
   border-color: rgba(23, 101, 106, 0.42);
   color: var(--accent);
+}
 }
 
 .reference-placement-toggle {
@@ -1206,9 +1361,11 @@ button:focus-visible {
   font-weight: var(--weight-semibold);
 }
 
+@media (hover: hover) {
 .reference-placement-toggle button:hover:not(:disabled) {
   background: rgba(23, 101, 106, 0.08);
   color: var(--accent);
+}
 }
 
 .reference-placement-toggle button.active {
@@ -1388,6 +1545,7 @@ button:focus-visible {
   grid-template-rows: auto minmax(0, 1fr);
   width: min(1120px, calc(100vw - 56px));
   height: min(780px, calc(100vh - 56px));
+  height: min(780px, calc(100dvh - 56px));
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.38);
   border-radius: 14px;
@@ -1455,6 +1613,39 @@ button:focus-visible {
   grid-template-columns: 42px minmax(0, 1fr);
   justify-content: stretch;
   text-align: left;
+}
+
+/* ============================================================================
+   B22（用户 2026-09-22 反馈）：「上传的图纸预览**比图纸的名字占比还要小**」
+   ----------------------------------------------------------------------------
+   实测（改动前，脚本 `_measure_upload.cjs`，图 `01_06_照片_人像特写.jpg` 900×1350 竖图）：
+     · 桌面 1600×1000：预览 **42×42**（面积 1,764）vs 名字文本块 171×34.9（5,961）
+       ⇒ 预览/名字 = **0.30** —— 用户说的就是这一档。
+     · iPad 抽屉档：预览框 107×148，而**名字那一栏有 140 宽（比图那栏还宽）**，
+       文件名还被截掉 **23px**；竖图 `contain` 之后画出来只有约 98×148 的一条。
+   这里先修**桌面那一条**：源图卡的缩略图 42 → **84** ⇒ 图比名字块大了。
+   ⚠️ 选择器**限定在 `.image-card` 里**：参考图那张卡共用 `.upload-zone` 基类，不能一起动
+      （它的尺寸由 B8/B17 那几段单独管）。抽屉档的两栏问题在下面 B22 段里单独修。
+   ============================================================================ */
+.image-card .upload-zone.has-image {
+  grid-template-columns: 84px minmax(0, 1fr);
+}
+
+.image-card .upload-zone img {
+  width: 84px;
+  height: 84px;
+  object-fit: cover;
+}
+
+/* 桌面档把缩略图放大到 84 之后，文件名那一栏只剩约 129px（名字要 154）⇒ 会被截断。
+   第一版实测就截了 **25px**（改动前是 0）。这里让它**折行显示完**，而不是换成截断 ——
+   否则就是"把预览放大"换来"名字看不全"，等于拿一个缺陷换另一个。
+   抽屉档不受影响（那里的名字是通栏窄带，154 < 257 一行放得下）。 */
+.image-card .upload-zone.has-image strong {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
 }
 
 .upload-zone img {
@@ -1552,7 +1743,7 @@ button:focus-visible {
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: 700;
   line-height: 1;
   cursor: default;
@@ -1572,7 +1763,7 @@ button:focus-visible {
   box-shadow: 0 10px 24px rgba(44, 35, 20, 0.14);
   color: var(--text);
   content: attr(data-tooltip);
-  font-size: 12px;
+  font-size: var(--font-size-small);
   font-weight: var(--weight-regular);
   line-height: 1.45;
   opacity: 0;
@@ -1599,8 +1790,14 @@ button:focus-visible {
   transition: opacity 0.12s ease, transform 0.12s ease;
 }
 
+@media (hover: hover) {
 .help-dot:hover::after,
-.help-dot:hover::before,
+.help-dot:hover::before {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+}
+
 .help-dot:focus-visible::after,
 .help-dot:focus-visible::before {
   opacity: 1;
@@ -1614,7 +1811,7 @@ button:focus-visible {
 .help-dot.mini {
   width: 14px;
   height: 14px;
-  font-size: 10px;
+  font-size: var(--font-size-caption);
 }
 
 .help-dot.mini::after {
@@ -1630,6 +1827,60 @@ button:focus-visible {
   display: none;
 }
 
+/* ---------------------------------------------------------------------------
+   第 4 批（用户裁决 A5 / 小确认 2）：**数据来源与许可证整块收进一个 `?`**。
+   界面不再常驻「数据来源与许可证（含非官方值）」那行字，只剩一个小圆点；
+   点开之后来源清单（链接 / 许可证 / 采集日期）、非官方色号警告、免责文案**一字未减**。
+   ⚠️ 署名（Bitbead CC BY 4.0）是**许可证义务**，只是"收起来"，不是"删掉" —— 见 `brands.ts` 头部注释。
+
+   ⚠️ 特异性刻意压低成**单类**（`.brand-source-toggle`，0,1,0）：
+   触屏档（`@media (pointer: coarse)`，本文件更靠后）要把命中区抬到 44×44 并用
+   `radial-gradient` 把"可见圆圈"画小 —— 那两条规则靠 `.app-shell` 前缀（0,2,0）**自然赢**，
+   不需要 `!important` 去打架。这一套与既有的 `.help-dot`（KI-001）完全同构。
+--------------------------------------------------------------------------- */
+.brand-source-details {
+  font-size: var(--font-size-small);
+}
+
+/* `summary` 默认是 `display: list-item` 且自带三角标记 ⇒ 必须同时清掉
+   `list-style` 与 WebKit 的 `::-webkit-details-marker`，否则问号旁边会多一个三角。 */
+.brand-source-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid rgba(23, 101, 106, 0.32);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  list-style: none;
+}
+
+.brand-source-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.brand-source-toggle:focus-visible {
+  outline: 3px solid rgba(23, 94, 100, 0.28);
+  outline-offset: 2px;
+}
+
+/* 展开态：小圆点变实心，作为"这块已经打开了"的可见反馈。
+   🔴 **`open` 属性在 `<details>` 上，不在 `<summary>` 上** —— 第 4 批初版写的是
+   `.brand-source-toggle[open]`，那是**永不匹配的死规则**（第 4 批的独立验证子代理实测抓到：
+   展开前后计算样式完全一致，bg 都是 rgb(227,240,239)）。现在挂到 `.brand-source-details[open]` 上。
+   ⚠️ 用 `:where()` **把特异性归零到 (0,1,0)**：触屏档那条 `.app-shell .brand-source-toggle`（0,2,0）
+   必须仍能压过它 —— 否则触屏上展开会变成 44px 的**实心大圆**（而不是 19px 的实心圆点）。 */
+:where(.brand-source-details[open]) .brand-source-toggle {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+}
+
 .floating-help-tooltip {
   position: fixed;
   z-index: 1000;
@@ -1641,7 +1892,7 @@ button:focus-visible {
   background: rgba(255, 252, 245, 0.98);
   box-shadow: 0 10px 24px rgba(44, 35, 20, 0.14);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--font-size-small);
   font-weight: var(--weight-regular);
   line-height: 1.45;
   overflow-wrap: break-word;
@@ -1689,12 +1940,28 @@ button:focus-visible {
   z-index: 4;
   display: grid;
   align-content: start;
-  gap: 7px;
+  gap: 3px;
   padding: 10px 6px;
   border-right: 1px solid var(--line-strong);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0)),
     #e8deca;
+  /* 第 3 批：条目从 10 个涨到 13 个（+3 个面板条目 +1 条分隔线），而条目高度从 58 收到 44。
+     1024×768（iPad 横）实测可用高约 641px，13 条 @44/3 加分隔线约 632px ⇒ 正好放得下。
+     但"正好"不是保障（顶栏改一次高度就变）⇒ 兜底：真放不下时工具条自己滚，绝不把最后
+     一个工具顶出屏幕（溢出会连带让浮层的 `grid-row` 包含块错位，所以宁可滚动）。 */
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* 面板条目与工具之间的分隔线。用**真元素**（占一整行）而不是给第一个工具加 `border-top`：
+   这样"工具从第几行开始"是一个能被 App 的 `railRowOf()` 算出来的确定整数 —— 边界一模糊，
+   浮层的 `grid-row` 就会整体错一行。 */
+.tool-rail-divider {
+  height: 1px;
+  margin: 2px 2px;
+  background: var(--line-strong);
+  opacity: 0.7;
 }
 
 .right-click-toggle {
@@ -1735,10 +2002,12 @@ button:focus-visible {
   font-weight: var(--weight-semibold);
 }
 
+@media (hover: hover) {
 .right-click-toggle button:hover:not(:disabled) {
   border-color: rgba(23, 101, 106, 0.18);
   background: rgba(255, 255, 255, 0.72);
   color: var(--accent);
+}
 }
 
 .right-click-toggle button.active {
@@ -1747,10 +2016,12 @@ button:focus-visible {
   color: #ffffff;
 }
 
+@media (hover: hover) {
 .right-click-toggle button.active:hover:not(:disabled) {
   border-color: var(--accent);
   background: var(--accent);
   color: #ffffff;
+}
 }
 
 .right-click-toggle.compact {
@@ -1794,10 +2065,13 @@ button:focus-visible {
   display: grid;
   justify-items: center;
   align-content: center;
-  gap: 4px;
+  gap: 1px;
   width: 72px;
-  height: 58px;
-  padding: 6px 7px;
+  /* 第 3 批：58 → 44（用户裁决 D8）。44 是触屏最小目标，也是"13 条能塞进 641px"的前提。
+     ⚠️ 条目高度与 rail 的 gap **必须**和 App 的 `railRowOf()` 口径一致地变 —— 不过浮层已经
+     不再写死像素（改由 `grid-row` 贴住按钮），所以这里改高度不会再像第 1 批那样把浮层改错位。 */
+  height: 44px;
+  padding: 3px 6px;
   border-color: transparent;
   background: transparent;
   color: #344044;
@@ -1822,9 +2096,11 @@ button:focus-visible {
   transform: translateY(-50%);
 }
 
+@media (hover: hover) {
 .tool-button:hover:not(:disabled) {
   border-color: var(--line-strong);
   background: #fff9ec;
+}
 }
 
 .tool-button:active {
@@ -1832,8 +2108,11 @@ button:focus-visible {
 }
 
 .tool-button svg {
-  width: 23px;
-  height: 23px;
+  /* 第 3 批：23 → 20。条目高收到 44px 之后，"图标 23 + 间隙 + 一行 12px 文字 + 内边距"
+     会顶破 44（实测 23+4+13.4+12 = 52.4）⇒ 图标必须跟着收。
+     `overflow: hidden` 的 `span` 是第二道保险，但**不能**只靠它 —— 靠裁剪就等于把文字切掉。 */
+  width: 20px;
+  height: 20px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.9;
@@ -1868,9 +2147,11 @@ button:focus-visible {
   background: var(--gold);
 }
 
+@media (hover: hover) {
 .tool-button.active:hover {
   border-color: var(--accent);
   background: var(--accent);
+}
 }
 
 .tool-button:focus-visible {
@@ -1878,10 +2159,78 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
+/* ---------------------------------------------------------------------------
+   **面板条目**（2026-09-20 第 3 批）：素材 / 参考 / 颜色 三个入口。
+   复用 `.tool-button` 拿到 hover / :active / :focus-visible / 左侧竖条 / 手机档覆盖，
+   只补两件事：① 常态下"这不是工具"的弱提示；② active 态**必须与工具选中态不同**。
+   ② 尤其重要：`.tool-button.active` 是 accent 实底 + 金色竖条 —— 面板条目照抄会被读成
+   "当前工具 = 素材"，而它其实只是"左抽屉开着"。这里改成**描边式**（白底 + accent 描边）。
+   ⚠️ 特异性 (0,3,0) > `.tool-button.active` 的 (0,2,0)，所以不依赖与它的先后顺序。
+--------------------------------------------------------------------------- */
+.tool-button.panel-entry {
+  background: rgba(255, 255, 255, 0.40);
+  border-color: rgba(190, 177, 154, 0.55);
+}
+
+.tool-button.panel-entry.active,
+.tool-button.panel-entry.active:hover {
+  border-color: var(--accent);
+  background: #fffdf8;
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(23, 94, 100, 0.14);
+}
+
+.tool-button.panel-entry.active::before {
+  background: var(--accent);
+}
+
+/*
+  **工具浮层的定位方式（2026-09-21 第 6 批：整体搬出工具条，根修"被 `overflow-x:hidden` 裁掉"）**
+  ─────────────────────────────────────────────────────────────────────────────
+  以前（第 1 批 → 第 3 批）：浮层是 `.tool-rail` 的**绝对定位网格子项**，
+        靠 `grid-row`（`App.tsx` 的 `railRowOf()` 算出来）贴住对应按钮那一行。
+        那条路线有一个**隐含前提：父容器不裁剪**。第 3 批同一次改动给
+        `.tool-rail` 加了 `overflow-x: hidden`（为了兜底溢出），于是浮层被**整块裁掉**：
+        桌面 1600×900 实测浮层 `rect.x = 391` 而 `.tool-rail` 右边界 `384`，
+        `elementFromPoint(浮层中心)` 落在 `canvas`/`board-chip` 上 —— **看不见也点不到**，
+        而且点击**穿透到画布**（「换色」工具下会真的改图）。iPad 1024×768 同样。
+
+  现在：8 个浮层全部挂在 `.tool-options-layer`（`.app-shell` 的网格子项、`.tool-rail` 的兄弟）
+        上，位置**每次渲染后由触发按钮的 `getBoundingClientRect()` 算出来**
+        （`App.tsx` 的 `placeToolOptions()`）⇒ 与"容器裁不裁剪"彻底解耦，
+        也不再有任何"第几行 / 第几个槽位"的算术。
+
+  ⚠️ 这里**没有第二套定位**：`left/top` 一律由 JS 写内联样式，CSS 只给尺寸与外观。
+     所以 `.tool-options` 里**不许**再出现 `top/bottom/left/right` 的固定值
+     （那会和 JS 打架，例如 `top` + `bottom` 同时有值会让浮层被拉满整条）。
+*/
+.tool-options-layer {
+  /*
+    覆盖层：`.app-shell` 的绝对定位子元素，**铺满整个壳**，只做"浮层的坐标系 + 层叠高度"。
+
+    🔴 **不可以**把它写成"确定放置的网格项"（例如 `grid-row:2` 的 `position:relative` 网格子项）。
+       实测（第一次实现就是这么写的）：一个"确定放置"的网格项会把整行 row 2 占满，
+       自动放置算法于是把左栏/工具条/画布/右栏全挤进一个**隐式第 3 行**，
+       `.app-shell` 的 `grid-template-rows` 变成 `66px 0px 834px` —— 真正的布局行坍成 0 高。
+       几何上"看起来一样"纯属巧合（隐式行恰好吸收了剩余高度），容器一变高变矮就整个塌。
+       ⇒ 覆盖层必须**脱离文档流**（绝对定位、不是网格项），这样它的存在对网格一行一列都没影响。
+
+    "别盖住顶栏与工具条"这条**不靠这里的几何**（铺满整壳就谈不上让开），而是由
+    `App.tsx` 的 `placeToolOptions()` 把浮层夹在**实测出来的可用带**里：
+    上边界 = 顶栏下边缘、下边界 = 手机档工具条上边缘（其余档 = 壳底）、左右 = 壳左右内边距。
+    这样"让开顶栏/工具条"只有一个真值来源（实际 rect），不再依赖"哪一行是哪一行"的约定。
+  */
+  position: absolute;
+  inset: 0;
+  z-index: 6; /* 高于画布与画布上的浮标（`.canvas-lock-hint` z-index 5），低于抽屉 41 / 遮罩 40 */
+  /* 覆盖层本身不吃指针事件：画布照常可交互；只有浮层自己（`pointer-events:auto`）可点。 */
+  pointer-events: none;
+}
+
 .tool-options {
   position: absolute;
-  left: calc(100% + 8px);
-  top: 75px;
+  left: 0;
+  top: 0;
   z-index: 8;
   display: grid;
   gap: 8px;
@@ -1892,47 +2241,64 @@ button:focus-visible {
   border-radius: 9px;
   background: rgba(255, 253, 248, 0.96);
   box-shadow: 0 12px 28px rgba(43, 34, 22, 0.12);
+  /* 覆盖层是 `pointer-events:none` ⇒ 浮层必须自己把它收回来。 */
+  pointer-events: auto;
 }
 
-.pencil-options {
-  top: 10px;
+/*
+  ✅ **2026-09-20 第 3 批已按 (b) 修掉**"写死 `top`"；第 6 批又把 `grid-row` 一并删掉
+     （换成按按钮 rect 计算，见上面 `.tool-options-layer` 的说明）。
+     所以下面这些类里**只剩宽度/高度这类与位置无关的声明**。
+  ─────────────────────────────────────────────────────────────────────────────
+*/
+
+/*
+  「换色」工具浮层（2026-09-20 第 2 批「换色融合」）。
+  ⚠️ **必须单独给宽度**：默认 `.tool-options` 只有 148px，里面那个 `.palette-grid`
+  在 148px 下只剩 2 列（候选色板要能一眼扫完，2 列等于没法用）。
+  宽度 330px 是照右抽屉里同一块编辑器的观感定的。
+  `max-height` 与 `overflow` 必须给：这一块内容比其它浮层高得多，不给会顶出屏幕。
+*/
+.recolor-options {
+  width: 330px;
+  max-height: min(70dvh, 680px);
+  overflow: auto;
 }
 
-.eraser-options {
-  top: 75px;
+/*
+  手机档的换色浮层：JS 侧会传 `compact`（只渲染摘要卡），这里再收一次高度。
+  ✅ **第 3 批把写死的 `120px` 换掉了**（原来 `bottom: 120px` 的注释自认"工具条行数若变化，
+     这个值要跟着改"）。**第 6 批连 `bottom` 一起删掉**：位置现在统一由 `App.tsx` 的
+     `placeToolOptions()` 按触发按钮的 rect 算，手机档浮层会被夹到覆盖层（= 顶栏以下、
+     工具条以上那一行）里 ⇒ 夹出来的结果与旧的 `bottom: calc(--rail-height + 8px)`
+     **一致**（两条都是"底边 = 覆盖层下边界 − 8px"），所以这里不再需要任何几何声明。
+     ⚠️ 例外：旧手机档对换色浮层单独用的是 `+12px` ⇒ 本浮层底边 **730.0 → 734.3（下移约 4px）**，
+     这是有意的统一（见 `App.tsx` `placeToolOptions()` 的注释与独立验证数字）。
+  宽度：手机档要占满整行（旧的 `left:8px; right:8px` 效果），用 `calc(100% - 16px)` 表达
+     （百分比以**覆盖层**为包含块 ⇒ 自动跟着安全区 padding 走；`width:auto` 在"只给了 left"
+     的绝对定位下会变成 shrink-to-fit、宽度不可预期）。
+*/
+@media (max-width: 767px) {
+  .tool-options.recolor-options {
+    width: calc(100% - 16px);
+    max-height: 44dvh;
+  }
 }
 
-.remove-options {
-  top: 205px;
-}
-
-.move-options {
-  top: 400px;
-}
-
-.copy-options {
-  top: 465px;
-}
-
-.paste-options {
-  top: 530px;
-}
-
-.mirror-options {
-  top: 595px;
-}
-
+/*
+  「复制」= 一个工具两个相位，浮层容器只带 `clipboard-options` 一个类
+  （原来 copy/paste 各写一条 `top` 且值还不同，是"两个工具"时代的残留）。
+*/
 .shape-options {
-  top: 660px;
   width: 184px;
   gap: 8px;
   padding: 9px;
 }
 
 .text-options {
-  top: 725px;
   width: 184px;
 }
+
 
 .tool-options-close {
   display: inline-flex;
@@ -1959,15 +2325,18 @@ button:focus-visible {
   stroke-linejoin: round;
 }
 
-.pan-options {
-  top: 790px;
-  width: 168px;
-}
+/* `.pan-options` 已于第 1 批随「拖动」工具一起删除（第 2 批清掉这条遗留的死规则）。 */
 
 .tool-options::before {
   position: absolute;
   left: -5px;
-  top: 24px;
+  /* 小箭头必须指向**它所属那个按钮的垂直中心**。
+     第 3 批：条目从 58px 收到 44px ⇒ 原来是写死的 `top: 24px`（≈ 58/2 − 4.5），
+     不改就会偏下 6.5px，于是这里写成算式（跟着 44px 的行高）。
+     第 6 批：浮层可能被**纵向夹住**（按钮在屏幕下方时），此时按钮中心相对浮层顶边
+     不再是固定值 ⇒ 由 `App.tsx` 的 `placeToolOptions()` 把实测值写进 `--tool-options-arrow-top`
+     （算式只作兜底：浮层与按钮上下对齐时正好是 (44 − 9) / 2 = 17.5px）。 */
+  top: var(--tool-options-arrow-top, calc((44px - 9px) / 2));
   width: 9px;
   height: 9px;
   border-left: 1px solid rgba(190, 177, 154, 0.82);
@@ -1975,6 +2344,23 @@ button:focus-visible {
   background: rgba(255, 253, 248, 0.96);
   content: '';
   transform: rotate(45deg);
+}
+
+/* 浮层**翻到按钮左侧**时（右边放不下）：箭头换到浮层右侧、指向右边。
+   `is-left-of-trigger` 由 `placeToolOptions()` 打。 */
+.tool-options.is-left-of-trigger::before {
+  left: auto;
+  right: -5px;
+  border-left: 0;
+  border-bottom: 0;
+  border-top: 1px solid rgba(190, 177, 154, 0.82);
+  border-right: 1px solid rgba(190, 177, 154, 0.82);
+}
+
+/* 浮层被**水平夹住**（左右都放不下，例如手机档底部工具条上的按钮）：它已经不在按钮
+   "旁边"了，箭头会指向空气 ⇒ 直接不画。手机档原来也是靠 `display:none` 藏掉它的。 */
+.tool-options.is-detached::before {
+  display: none;
 }
 
 .tool-options-header {
@@ -2030,7 +2416,6 @@ button:focus-visible {
   border-radius: 8px;
   background: rgba(240, 250, 249, 0.5);
   color: #52646b;
-  font-size: var(--font-size-tiny);
   font-weight: var(--weight-regular);
   line-height: var(--line-snug);
 }
@@ -2062,7 +2447,6 @@ button:focus-visible {
 .clipboard-tool-header span {
   overflow: hidden;
   color: var(--text-muted);
-  font-size: var(--font-size-tiny);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -2144,7 +2528,6 @@ button:focus-visible {
 
 .compact-hint {
   padding: 6px 7px;
-  font-size: var(--font-size-tiny);
 }
 
 .text-tool-field {
@@ -2255,9 +2638,11 @@ button:focus-visible {
   text-align: center;
 }
 
+@media (hover: hover) {
 .shape-picker button:hover {
   border-color: rgba(23, 101, 106, 0.38);
   background: #f6fbf8;
+}
 }
 
 .shape-picker button.active {
@@ -2266,6 +2651,7 @@ button:focus-visible {
   color: #ffffff;
 }
 
+@media (hover: hover) {
 .shape-picker button:disabled,
 .shape-picker button:disabled:hover,
 .right-click-toggle button:disabled,
@@ -2274,6 +2660,7 @@ button:focus-visible {
   background: rgba(255, 253, 248, 0.58);
   color: rgba(54, 64, 68, 0.45);
   cursor: default;
+}
 }
 
 .shape-picker svg {
@@ -2344,7 +2731,9 @@ button:focus-visible {
   cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath fill='white' stroke='%23111827' stroke-width='1.5' d='M6 14.5 14.5 6l7.5 7.5-7 7a2.3 2.3 0 0 1-3.3 0L6 14.8z'/%3E%3Cpath stroke='%2317656a' stroke-width='1.6' d='m10 10-3-3'/%3E%3Cpath fill='%2317656a' d='M21.2 19c1.1 1.5 1.7 2.6 1.7 3.3a2.2 2.2 0 0 1-4.4 0c0-.7.6-1.8 1.7-3.3a.6.6 0 0 1 1 0z'/%3E%3C/svg%3E") 7 18, copy;
 }
 
-.canvas[data-tool='remove'] {
+/* 「整片删除」（原「消除」工具，2026-09-20 并进橡皮的"范围"）——
+   和笔刷橡皮共用一个 `data-tool='eraser'`，所以靠 `data-eraser-scope` 区分光标。 */
+.canvas[data-tool='eraser'][data-eraser-scope]:not([data-eraser-scope='brush']) {
   cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath fill='white' stroke='%23111827' stroke-width='1.5' d='M6 14.5 14.5 6l7.5 7.5-7 7a2.3 2.3 0 0 1-3.3 0L6 14.8z'/%3E%3Cpath stroke='%2317656a' stroke-width='1.6' d='m10 10-3-3'/%3E%3Cpath stroke='%23c24132' stroke-width='2' stroke-linecap='round' d='m19 19 4 4m0-4-4 4'/%3E%3C/svg%3E") 7 18, not-allowed;
 }
 
@@ -2360,11 +2749,8 @@ button:focus-visible {
   cursor: move;
 }
 
-.canvas[data-tool='copy'] {
-  cursor: copy;
-}
-
-.canvas[data-tool='paste'] {
+/* 「复制」一个工具两个相位（原 copy / paste 两个工具），光标相同 ⇒ 一条规则。 */
+.canvas[data-tool='clipboard'] {
   cursor: copy;
 }
 
@@ -2380,6 +2766,8 @@ button:focus-visible {
   cursor: text;
 }
 
+/* `data-tool='pan'` 不再是工具（「拖动」已于 2026-09-20 删除），
+   但 `canvasTool` 在平移进行中仍会算成 'pan' ⇒ 这条规则继续有用。 */
 .canvas[data-tool='pan'],
 .canvas.can-pan,
 .canvas.is-reference-adjusting {
@@ -2465,6 +2853,30 @@ button:focus-visible {
 
 .palette-section {
   display: flex;
+  /*
+    B7（用户第 6 条的目的）：**放宽色盘高度上限**。
+    ⚠️ 先说清约束（三档实测）：右栏是**一条会滚的 flex 列**，而且「调色盘」tab 并不独占它 ——
+       同一列里还有 `.right-tabs`、以及本 tab 自己的 `.view-section`(167.8) 与
+       `.hover-section`(60.7)。1600×900 上右栏内容盒只有 810px，而"tabs 45 + 色盘上方固定块
+       414 + 视图/格子 228.5 + 三处 gap 36" = 723.5 ⇒ **留给色盘的只有 86.5px**。
+       也就是说：在桌面档，"色盘该多高"**不是**一个能被容器算出来的量（容器怎么算都只有 86），
+       它是一条**政策**。改动前那条政策是 `max-height: clamp(250px, 36dvh, 398px)`（钉死）。
+    ⇒ 本批把政策改成：**"改动前那条 clamp" + "本次从色盘上方搬走的那 180px"**，
+       并且**取消上限**（`max-height: none`）：
+         · 上限没了 ⇒ 它不再是一条"钉死"的规则，而是"首选高度"（`flex-basis`），
+           窗口更高时它照样跟着 `36dvh` 长（1920×1200 实测比改动前高 180px，见报告）；
+         · 多出来的 180px 就是从这里搬走的品牌卡片（桌面实测 170.5px + 它下面那个 10px gap）。
+           iPad / 手机档那张卡片本来是 198（+10 gap = 208），这里三档统一取 **180** ——
+           零头（桌面 0.5 / 触屏 28）留给"少滚一点"，不制造第二组数字。
+         · ⛔ **不能**把本段改成 `flex: 1 1 auto; min-height: 0` 那种"吃满右栏剩余高度"的写法：
+           那样本段会被压到 500.5px（右栏里还有视图/格子两块），而色盘的下限是 324px，
+           于是色盘的盒子会**冲出本段**、被后面的「视图」「格子」卡片压住
+           （B7 初版实测：1600×900 下色盘 A11–A20 被卡片盖住 —— 截图与 rect 都在报告里）。
+           所以本段保持**内容撑**（`0 0 auto`）：宁可让右栏滚，也不让色盘压在别的块上。
+    ────────────────────────────────────────────────────────────────────────────
+    这一条变量只服务下面那个网格：本次"从色盘上方搬走的高度"。
+  */
+  --palette-freed-above-grid: 180px;
   flex: 0 0 auto;
   flex-direction: column;
   gap: 10px;
@@ -2472,8 +2884,21 @@ button:focus-visible {
 }
 
 .palette-section .palette-grid {
-  flex: 0 0 auto;
-  max-height: clamp(250px, 36dvh, 398px);
+  /*
+    改动前：`flex: 0 0 auto; max-height: clamp(250px, 36dvh, 398px)`
+            ⇒ 高度被 36dvh 钉死（1080→388.8 / 768→276.48 / 844→303.84），
+              搬走品牌卡、状态行它都**一格都不会变高**（这是问题 ③ 的原文）。
+    改动后：上限删除（`max-height: none`），首选高度 = 原 clamp + 搬走的那 180px，
+            且带 `flex: 1 1 auto`（万一将来右栏真有空余，它会继续长，而不是像以前那样顶死）。
+    三档实测前后数字（含"看到完整色盘还需滚多少 px"）见报告；门禁 `_verify_B7.cjs`
+    会断言三档色盘高度**都严格大于**基线。
+    ⚠️ 这条只作用于 `.palette-section` **里面**那一个网格。改色编辑器里那两个 `palette-grid`
+       （`[data-recolor-recommend]` / `[data-recolor-candidates]`）在 `.usage-section` 下，
+       且自带内联 `flex: 0 0 auto; maxHeight: none` ⇒ 一条都不受影响（B7 的 A/B 里有实测对照）。
+  */
+  flex: 1 1 auto;
+  flex-basis: calc(clamp(250px, 36dvh, 398px) + var(--palette-freed-above-grid));
+  max-height: none;
   min-height: 0;
 }
 
@@ -2495,6 +2920,46 @@ button:focus-visible {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+
+/*
+  ============================================================================
+  Bug C 根修（2026-09-21）：手机 390×844 上「用量」列表与改色编辑器可用高 **0px**
+  ============================================================================
+  结构（改动前）：`.usage-section` 是一个**定高**的 flex 列 + `overflow: hidden`，
+  里面除列表之外还有 5 个固定块（标题 / 概览 / 每包颗数 / 统计图层卡 / 改色入口）。
+  ⚠️ B6（2026-09-21）之后只剩 **4 个固定块** —— 「统计图层卡」整块删除，
+     用户裁决「用量页面要去掉图层板块，给下面的换色列表腾位置」。
+     下面这些数字（405.8 / 0px / 11 行）是**改动前**的实测口径，保留作当时根修的依据；
+     B6 之后三档可用高的前后对照见 `报告.md`（新构建里列表/编辑器只会更高，不会更低）。
+  手机实测：这 5 块的自然高 + 5 个 gap + padding-bottom = **405.8px**，而 `.usage-section`
+  的 clientH 只有 **400px** ⇒ `flex: 1 1 auto; min-height: 0` 的列表被压成 **0px**
+  （实测 `.usage-list` clientHeight = 0、`[data-recolor-editor]` clientHeight = 0，
+  DOM 里 11 行用量一像素都看不到），**而且 `overflow: hidden` 连"滚下去看"都不允许**。
+
+  这是两个独立缺陷叠在一起，两条都要修：
+    (a) 可滚列表**没有真实下限**（`min-height: 0` 是给"容器够高时能正常收缩"用的，
+        不是给它"允许收到 0"）—— 见下面第一条 `min-height`：至少 3 行（3 × 50 + 2 × 6）。
+        桌面 343 / iPad 123（实测）。⚠️ **桌面 343 > 162 ⇒ 不变；iPad 123 < 162 ⇒ 会被抬到 162（+39px）**，
+        副作用是 iPad 的 `.usage-section` 由"不滚"变成"可滚 39px"（clientH 553 / scrollH 592，多一层内滚动）——
+        这是**已知并接受**的代价（宁可 iPad 多一层内滚动，也不能让列表收到 0）。
+        ⇒ **不要写成"iPad 列表高度不变"**（独立验证子代理 `7e02e602` 指出初版注释与实测自相矛盾）。
+    (b) 容器**裁剪**而不是滚动 —— `.usage-section` 改成 `overflow-y: auto`：
+        一旦"固定块 + 列表下限"超过容器高，容器自己滚，而不是把列表悄悄裁掉。
+  手机档还会再做一次**版式重分配**（那个高度的上限只有 400px，靠上面两条仍然只能露出列表的
+  几像素）—— 见本文件末尾 W2.1 段里 `.right-panel:has(.usage-section)` 那组规则。
+  ────────────────────────────────────────────────────────────────────────────
+*/
+.usage-section {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* 「用量」段里那两个**会被压扁的可滚主体**：列表与改色编辑器。
+   下限 = 3 行（行高 50px、间距 6px），与 `.usage-list button { min-height: 50px }` 同源。 */
+.usage-section > .usage-list,
+.usage-section > .recolor-editor-body {
+  min-height: calc(3 * 50px + 2 * 6px);
 }
 
 .panel-section h2 {
@@ -2522,31 +2987,120 @@ button:focus-visible {
   padding: 0 8px;
 }
 
-.status-section {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-}
-
-.status-section div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.status-section strong,
-.status-section span {
+/*
+  ============================================================================
+  B7（用户第 6 条）：右栏顶部那行小字 → 画布**左下角**一行小字
+  ============================================================================
+  这里原来有 `.status-section`（`grid-template-columns: minmax(0,1fr) auto`）、
+  `.status-section div/strong/span`、`.status-pill`、`.status-copy-button` 与
+  `.status-section.is-error*` 那 8 条规则 —— 它们**只**服务右栏那一块（grep 全仓确认：
+  消费方只有 `RightPanel.tsx` 那段已删除的 JSX 与它自己的 `.status-copy-button`）。
+  现在整块搬到画布左下角，选择器随之换成 `.canvas-status*`，**旧规则整组删除**
+  （不是留着 `display:none`）。
+  ⚠️ 错误态那条「复制详情」按钮由 `App` 的 `.error-banner-action` 承担（错误浮条本来就有），
+     所以 `.status-copy-button` 没有替代品，是纯删除。
+  ────────────────────────────────────────────────────────────────────────────
+  几何约束（三档实测 rect 与 `elementFromPoint` 证据见门禁 `_verify_B7.cjs`）：
+   · 桌面/平板：`max-width: calc(100% - 240px)` —— 给右下角 `.zoom-controls`（实测 184×40 /
+     204×54，`right:14 bottom:14`）**留出右侧整条**，两者水平方向永不重叠；
+   · 手机（≤767px）：画布只有 390 宽、`.zoom-controls` 独占 204px，左侧只剩 162px
+     ⇒ 长回执会被挤成省略号。所以那一档把整条**抬到缩放控件之上**（见文件末尾手机块），
+     仍然贴左，且与 `.zoom-controls` 的 rect 零重叠。
+   · 它是一条**可命中**的胶囊（`elementFromPoint` 命中的是它自己）：与 `.board-chip` /
+     `.zoom-controls` 同一做法，只占左下角一块；不铺满整边，画布其余部分照样能画。
+============================================================================ */
+/* ============================================================================
+   B18（用户第 15 轮第 8a 条）：吸管**长按放大镜**
+   ----------------------------------------------------------------------------
+   它是画布之上的一小块"放大镜"：内容由 `WorkspaceCanvas` 用**主画布自己的位图**放大画进去
+   （`drawImage`，4×，`imageSmoothingEnabled=false` 保像素感），这里只管外观与层级。
+   · `pointer-events: none`：**绝不能抢走指针** —— 触摸流仍归画布，否则按住拖动会断；
+   · `z-index: 13`：压过画布与画布上的三个小件（`.canvas-status` 4、`.tool-options-layer` 6、
+     `.palette-popover` 8；`.board-chip` / `.zoom-controls` 没写 z-index ⇒ 在同一层叠上下文里由 13 压过），
+     但**低于色盘圆点 39 与抽屉** —— 符合"圆点与抽屉压一切"的老口径；
+   · 圆角 + 描边 + 阴影 ⇒ 它在画布上"浮起来"，与色盘圆点/缩放控件同一套视觉语言；
+   · 位置由组件按手指坐标算（默认在手指上方，贴边自动翻转），这里不写死 left/top。
+   ============================================================================ */
+.eyedropper-loupe {
+  position: absolute;
+  z-index: 13;
+  pointer-events: none;
+  border: 2px solid rgba(23, 101, 106, 0.9);
+  border-radius: 10px;
+  background: #fffdf8;
+  box-shadow: 0 6px 18px rgba(15, 45, 46, 0.28);
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.eyedropper-loupe canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 色号贴片：压在镜子下沿（与画布上"R1 C1 - H7"同一口径的读数） */
+.eyedropper-loupe-code {
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  transform: translateX(-50%);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(15, 45, 46, 0.82);
+  color: #fffdf8;
+  font-size: 11px;
+  line-height: 15px;
   white-space: nowrap;
 }
 
-.status-pill {
-  padding: 5px 8px;
+.canvas-status {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 240px);
+  padding: 6px 10px;
+  border: 1px solid rgba(17, 24, 39, 0.12);
   border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: var(--font-size-small);
-  font-weight: var(--weight-medium);
+  background: rgba(255, 253, 248, 0.94);
+  color: #4b5563;
+  font-size: var(--font-size-caption);
+  line-height: 1.35;
+}
+
+/* 互补信息（色数 · 板数）：与左上角 `.board-chip` 同一字重口径，不重复它的内容。 */
+.canvas-status-facts {
+  flex: 0 0 auto;
+  color: #374151;
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+/* 操作回执。**允许换行**（`white-space: normal`）：换品牌那种 40+ 字的长句在手机上放不下一行，
+   用省略号截掉等于把"可撤销"三个字藏起来 —— 右栏那一版在 W5 就是因为这个原因改成 normal 的。 */
+.canvas-status-notice {
+  min-width: 0;
+  color: #4b5563;
+  font-weight: var(--weight-regular);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* 错误态：红一圈（右栏那版 `.status-section.is-error` 的同一口径）。
+   真正"显眼"的仍是 `.error-banner`（浮在画面正上方、`role="alert"`、带复制按钮），这条是补充。 */
+.canvas-status.is-error {
+  border-color: #e0a3a3;
+  background: #fff4f4;
+  color: #a82222;
+}
+
+.canvas-status.is-error .canvas-status-notice {
+  color: #a82222;
+  font-weight: var(--weight-semibold);
+  white-space: pre-wrap;
 }
 
 .board-chip {
@@ -2560,6 +3114,15 @@ button:focus-visible {
   color: #374151;
   font-size: var(--font-size-body);
   font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+/* 第 3 批（B6）：徽标里新加的「· N 颗」。手机档顶栏不再显示品牌/铭牌，
+   这一行成了"这张图多大、多少颗"的唯一读数 ⇒ 后半截用略弱的字重，但**不缩小字号**
+   （手机上 11px 的中文已经偏小）。 */
+.board-chip-beads {
+  color: #5b6672;
+  font-weight: var(--weight-medium);
 }
 
 .canvas-lock-hint {
@@ -2608,6 +3171,231 @@ button:focus-visible {
   font-size: var(--font-size-small);
   font-weight: var(--weight-semibold);
   text-align: center;
+}
+
+/* ============================================================================
+   B9（用户第 8 条，分段第一步「只做入口」）：**画布右上角的当前色圆点**
+   （2026-09-21 **按用户最新裁决改过**：圆点不做让位、抽屉打开时被抽屉盖住）
+
+   底座口径：与 `.board-chip`（左上）/ `.zoom-controls`（右下）/ `.canvas-status`（左下）
+   完全同源 —— 都挂在 `.workspace`（自身 `position:relative`）上做绝对定位，
+   内缩 14px（手机档 8px，见文件末尾那条 `.board-chip` 附近的手机规则）。
+   ⇒ 右上角本来就是空的，圆点与那三者 rect **零重叠**（门禁 `_verify_B9b.cjs` 逐档断言）。
+
+   🔴 两个必须写死的约束（用户点名的两条风险）：
+     ① **不贴顶、不压顶栏**：它是 `.workspace` 的子元素 ⇒ 顶边从画布顶开始算，
+        本来就落在顶栏之下；再给 `top: 14px`（手机 8px）与左右同一个内缩口径。
+        手机上画布顶距屏幕顶只有 67px，贴顶的圆点会与 PWA 状态栏/顶栏按钮打架。
+     ② **z-index 41**：这是**用户裁决「抽屉打开时挡住圆点即可」的落点** ——
+        圆点与右抽屉**同一层（41）**，而抽屉是**后挂上来的**（`WorkspaceCanvas` 里
+        portal 的 JSX 在圆点之后 ⇒ DOM 里排在后面 ⇒ 同一 z-index 下后画的在上面）
+        ⇒ 抽屉打开时**抽屉盖住圆点**。这样"圆点抢走抽屉里 tab/色盘的点击"在结构上不可能发生
+        （门禁 C9 逐 tab / 逐 swatch 用 `elementsFromPoint` 证明，且把这条层级关系也断言住了，
+         将来谁把 portal 挪到圆点前面，门禁会红）。
+        上一版取 46（高于抽屉）**已被否决**：那会让圆点压在抽屉上、并压住色盘网格右上角一个 swatch。
+        · 仍**高于**遮罩 40 / 工具浮层覆盖层 6 / 画布浮标 5；
+        · 手机档抽屉是**底部浮层**（顶边 y=122），根本盖不到圆点（y 75..119），
+          而遮罩 40 在圆点之下 ⇒ 手机上"点圆点收起色盘"仍然可用（门禁 F2 就在手机档验）。
+        · 低于 `.floating-help-tooltip`(60) 与 `.error-banner`(1200)，不会压住帮助与错误提示。
+
+   ⚠️ 只在**抽屉档**渲染（`WorkspaceCanvas` 里 `panelLayout &&`）⇒ 桌面 1600×900
+      上这条规则**没有任何消费方**，DOM/几何/像素 Δ=0。
+   ⚠️ 命中区就是 38×38 这一个圆（细指针 ≥24、粗指针仍 ≥38）；`padding:0` 让色块填满，
+      不做"透明大热区"那种补丁 —— 它本来就该是"一个圆点"。
+   ============================================================================ */
+.palette-dot {
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  /* B15（用户第 1 条）：**圆点必须在抽屉之下**。
+     原来是 41（与 `.left-panel`/`.right-panel` 同级），而圆点 DOM 更靠后 ⇒ 它压在抽屉**上面**：
+     实测 iPad 1024 圆点 x966–1010 正压在左抽屉（x704–1024）右上角，`elementFromPoint(圆心)`
+     命中的是圆点本身 ⇒ 既挡了抽屉内容、又还能点（点下去会把抽屉收掉、弹出色盘）。
+     用户的裁决依据还是第 14 轮那句「抽屉打开时挡住圆点即可，因为**打开抽屉时不用色盘**」
+     ⇒ 圆点该被抽屉挡住。降到 39（低于 `.panel-scrim` 40、抽屉 41，高于画布内容）是**兜底**；
+     真正的行为由下面 `.is-left-open/.is-right-open` 那条"抽屉开着就隐藏"负责。 */
+  z-index: 39;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid rgba(17, 24, 39, 0.24);
+  border-radius: 50%;
+  background: rgba(255, 253, 248, 0.94);
+  box-shadow: var(--shadow-soft);
+  cursor: pointer;
+  /* 触屏：`.workspace` 是 `touch-action: none`（画布手势层要独占）⇒ 圆点必须自己收回默认，
+     否则那一下会走画布的指针手势路径、并可能吃到 300ms 的点击延迟。 */
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  /* 隐藏/显示各 120ms 过渡：抽屉滑出的同时圆点淡出，避免"啪一下消失"。 */
+  transition: opacity 120ms ease;
+}
+
+/* B15（用户第 1 条）：**任何抽屉打开时，圆点一律隐藏**（不只是被盖住——手机档的抽屉是底部浮层，
+   盖不到圆点，只降 z-index 仍会露在外面）。
+   `opacity:0` 而不是 `display:none`：它是绝对定位、不参与布局，`opacity` 不会引起任何重排，
+   而且保留 120ms 过渡；`pointer-events:none` 保证"看不见也点不到"。
+   ⚠️ 两个类名来自 `App.tsx` 的 `shell.classList.toggle('is-left-open'|'is-right-open', …)`
+      （抽屉档专用；桌面档 `openPanel` 恒为 null ⇒ 这两条规则在桌面**没有消费方**，Δ=0）。 */
+.app-shell.is-left-open .palette-dot,
+.app-shell.is-right-open .palette-dot {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.palette-dot:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 展开态：给一圈 accent 描边，让"点开过"这件事在圆点自己身上看得见
+   （与 `.tool-button.panel-entry.active` 同一个"描边式 active"口径）。 */
+.palette-dot.is-open {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 2px rgba(23, 101, 106, 0.28),
+    var(--shadow-soft);
+}
+
+/* 颜色本体：与 `.palette-selected-card > span` / `.swatch > span` 同一口径（1px 描边 + 圆角），
+   颜色由内联 `style.backgroundColor` 给 ⇒ `selectedColorId` 是唯一真值来源，换色后跟着变。 */
+.palette-dot-color {
+  display: block;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(17, 24, 39, 0.18);
+  border-radius: 50%;
+}
+
+/*
+  B9（2026-09-21 **按用户最新裁决改过**）：这里原来有一条
+  `@media (min-width: 768px) { .app-shell.is-right-open .palette-dot { left: calc(100% - var(--right-drawer-w) - 58px); right: auto } }`
+  —— 抽屉打开时把圆点**左移到抽屉左边缘之外**。**已整块删除。**
+
+  用户裁决原话：「抽屉打开时挡住圆点即可，因为打开抽屉时不用色盘」
+  ⇒ 圆点**始终停在画布右上角原位**（上面那条基础规则，`right: 14px` / 手机 8px），
+     抽屉打开时被抽屉盖住是用户明确接受的。
+
+  ⚠️ 上一轮给这条让位逻辑写的理由是"圆点压住抽屉里的 tab、点「用量」被吃掉"。
+     本轮逐档复测（`_verify_B9b.cjs` 的 C7/C9 原始读数）：抽屉打开时两个 tab 在
+     `x=677..841.5`（iPad）/ `x=453..612.5`（窄窗），而圆点在 `x=966..1010` / `x=748..786`
+     ⇒ **与两个 tab 零重叠**，那个理由不成立。
+     圆点真正压住的是**色盘网格右上角那一小块**（iPad `x=966..1010,y=156..175`；
+     窄窗 `x=748..778,y=134..161`）。这一块的后果与处置写在门禁 C9 里（逐 swatch 命中统计 +
+     `elementsFromPoint` 叠层证据），不靠这条注释承诺。
+*/
+
+/* ============================================================================
+   B10（用户第 8 条**第二步**）：**色盘浮层** —— 画布右上角圆点的正下方那一块
+   ============================================================================
+   形态：与 8 个工具浮层**同一个覆盖层**（`.tool-options-layer`）里的第二个浮层；
+        位置由 `App.tsx` 的 `placePalettePopover()` 按**实测 rect**（圆点 / 顶栏 /
+        画布上已有的浮动控件）写内联 `left/top` ⇒ 这里**不许**写 `top/bottom/left/right`
+        （会与 JS 打架，同 `.tool-options` 的约定）。
+   为什么不会被裁：祖先链上**没有任何一个盒子在某一个轴上会滚** ——
+        `.tool-options-layer` 没有 `overflow`；`.app-shell` 是 `overflow:hidden`，但它是
+        **根外壳**，而浮层被 JS 夹在它的内边界之内。这正是第 3 批栽过的那个坑
+        （一个轴写 `overflow:auto/scroll` 会让另一个轴的 `visible` 计算成 `auto` ⇒ 必被裁）。
+   尺寸：宽 340px（与右栏里同一块色盘的观感一致）；高上限 `min(72dvh, 600px)`，
+        网格自己滚。iPad 1024×768 上"色盘网格的必要高度"口径 = **3 整行色块**
+        （iPad 实测 swatch 52px 高 + 行距 6px ⇒ 3×52 + 2×6 = 168 内容 + 网格 padding 10 = 178），
+        实测值见 `%TEMP%\b10_impl\报告.md`（门禁按**实测**的 swatch 高/行距算这条下限，
+        不写死数字，换档位/字号也不会失效）。
+   ⚠️ 桌面 1600×900：`paletteDotOpen` 恒为假 ⇒ 本块**没有任何消费方**，DOM/几何/像素 Δ=0。
+   ============================================================================ */
+.palette-popover {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  max-height: min(72dvh, 600px);
+  padding: 9px;
+  border: 1px solid rgba(190, 177, 154, 0.82);
+  border-radius: 10px;
+  background: rgba(255, 253, 248, 0.98);
+  box-shadow: 0 14px 32px rgba(43, 34, 22, 0.18);
+  /* 覆盖层是 `pointer-events: none` ⇒ 浮层必须自己把它收回来。 */
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+/* 里面那块 `.palette-section` 本来是右栏里的 `flex: 0 0 auto` 段落；在浮层里它必须
+   **吃掉浮层的全部高度、并把剩余高度让给网格**（`min-height:0` 是让 flex 子项真的能被压小的那一步）。 */
+.palette-popover .palette-section {
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 8px;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+/* 网格：吃掉剩余高度、自己滚。
+   ⚠️ `min-height:0` 不能省 —— 否则 `flex:1 1 auto` 会被内容撑回自然高、把浮层顶出屏幕
+      （与 `.palette-section` 里那段 B7 注释同源）。 */
+.palette-popover .palette-section > .palette-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* 分组筛选在 340px 宽的浮层里不该照抄 `@media (max-width:1320px)` 那条 `repeat(3, …)`
+   （9 个分组会摊成 3 行、白吃 100+px 高度）⇒ 按可用宽自动排；特异性 (0,2,0) 自然压过 (0,1,0)。 */
+.palette-popover .palette-filter {
+  grid-template-columns: repeat(auto-fit, minmax(46px, 1fr));
+}
+
+/*
+  手机档（用户第 3 条裁决）：**底部浮层**。
+  · `width: calc(100% - 16px)` 的百分比以**覆盖层**为包含块（与手机档 `.tool-options` 同一手法，
+    所以 JS 只写 `left: 8px`、宽度交给 CSS，避免"shrink-to-fit 宽度不可预期"）；
+  · `overflow: auto` ⇒ 整块浮层可滚（手机档的换色浮层也是这个形态），
+    网格再自己限一道高，避免"300 个色块的浮层"把工具条顶出屏幕。
+*/
+@media (max-width: 767px) {
+  .palette-popover {
+    width: calc(100% - 16px);
+    max-height: 60dvh;
+    overflow: auto;
+  }
+
+  .palette-popover .palette-section > .palette-grid {
+    flex: 0 0 auto;
+    max-height: 32dvh;
+  }
+}
+
+/* ============================================================================
+   B10（用户裁决「调色盘剩下的视图板块合并到参数工具」）：品牌/版本下拉并进 `.params-card`
+   ============================================================================
+   位置：`.params-card` 的 `.param-rows` 里的最后一项（`.params-brand-slot`）。
+   为什么是它（"选色必需 vs 可放参数"的划分，另一侧理由见 `RightPanel.tsx` 的 `PaletteBody`）：
+     · 它带着 **221/291 版本档 + 品牌**，换品牌会**整图重算色号** ⇒ 工程级设置，不是"挑颜色"；
+     · 它里面有 CC BY 署名折叠块（合规义务）⇒ 挂在参数卡里语义更顺（"数据出处"属于参数）。
+     · 分组筛选 / 当前色卡 / 最近使用属**选色必需**，留在浮层里跟着色盘走。
+   ⚠️ 这里只做一件事：把 `.panel-section` 自带的"段落下边框 + 下内边距"去掉 ——
+      它现在是**卡片里的一行字段**，不是右栏里的一段正文（否则卡片里会多出一条悬空的分隔线）。
+   ⚠️ 桌面档这个槽位不渲染（`panelLayout` 为假）⇒ 桌面 Δ=0。
+   ============================================================================ */
+.params-brand-slot > .panel-section {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+/* B10：抽屉档这张卡里的「数据来源与许可证」折叠块**向上展开**。
+   原因（iPad 1024×768 实测）：品牌控件并进参数卡后是这张卡的**最后一项**，而
+   `.brand-source-body` 的默认位置是"从字段下方整宽浮出"⇒ 会有约 154px 落到左抽屉
+   可视区之外（点开问号要下滑才能看全署名）。向上展开正好落进参数卡自己的空白里
+   ⇒ **展开即全可见**，且不改动任何其它布局（只改这一个 body 的 top/bottom）。
+   ⚠️ 桌面档这个槽位不渲染（`panelLayout` 为假）⇒ 桌面那条规则一字未动、Δ=0。 */
+.params-brand-slot .brand-combined-field > .brand-source-details[open] > .brand-source-body {
+  top: auto;
+  bottom: calc(100% + 4px);
 }
 
 .palette-grid {
@@ -2712,15 +3500,77 @@ button:focus-visible {
   font-weight: var(--weight-semibold);
 }
 
-.readonly-brand-field {
+/*
+  ============================================================================
+  B7（用户第 5 条）：品牌与版本合并成**一个**下拉框
+  ============================================================================
+  这里原来有 `.readonly-brand-field`（`display:grid; gap:6px` + 它的 `select{width:100%}`）
+  —— 那是"221 / 291 档"那个下拉框的样式，标签却印成「色号品牌」。它已并进 `BrandSelect`
+  里那**一个** `<select>`（选项 = MARD 基础版 / MARD 完整版 / 优肯·Artkal M221 并列同级）
+  ⇒ 两条规则整组删除，换成下面这一组。
+
+  布局（`grid`，不是 `flex`）：第 1 行是标签（跨两列），第 2 行左 = 下拉框、右 = `?`。
+  ⚠️ `?`（`.brand-source-details`）必须是第 2 行的一个**网格项**，但展开出来的说明内容
+     不能参与那一行的尺寸（否则展开时会把下拉框挤窄）⇒ 内容包在 `.brand-source-body` 里
+     **绝对定位**到整块字段的下方浮出（见下面那条规则）。
+============================================================================ */
+.brand-combined-field {
+  position: relative;
   display: grid;
-  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 6px;
+}
+
+.brand-combined-label {
+  grid-column: 1 / -1;
   color: var(--text-muted);
   font-size: var(--font-size-small);
 }
 
-.readonly-brand-field select {
+.brand-combined-field > select {
+  grid-column: 1;
+  min-width: 0;
   width: 100%;
+}
+
+.brand-combined-field > .brand-source-details {
+  grid-column: 2;
+}
+
+/* 展开态：说明内容从字段**下方**整宽浮出。`left/right: 0` 相对 `.brand-combined-field`
+   （`position: relative`）解析 —— 因为 `.brand-source-details` 本身不是定位元素。
+   第 4 批那个 `?` 圆点样式（`.brand-source-toggle`）与触屏 44×44 命中区**一字未改**。 */
+.brand-combined-field > .brand-source-details[open] > .brand-source-body {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 3;
+  padding: 8px 10px 10px;
+  border: 1px solid rgba(17, 24, 39, 0.14);
+  border-radius: 10px;
+  background: #fffdf8;
+  box-shadow: var(--shadow-soft);
+  color: var(--text);
+  font-size: var(--font-size-small);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* 特殊材质提示（改动前那条内联 `fontSize: var(--font-size-small); opacity:.9; lineHeight:1.5`
+   搬成类；`.brand-select-section` 仍由 BrandSelect 的内联 `display:grid; gap:8` 之外的
+   基础 `.panel-section` 规则承担纵向间距 —— 这里只补字段与提示之间的 8px）。 */
+.brand-select-section {
+  display: grid;
+  gap: 8px;
+}
+
+.brand-special-notice {
+  font-size: var(--font-size-small);
+  opacity: 0.9;
+  line-height: 1.5;
 }
 
 .recent-colors-field {
@@ -2750,9 +3600,11 @@ button:focus-visible {
   color: var(--text);
 }
 
+@media (hover: hover) {
 .recent-color-row button:hover:not(:disabled) {
   border-color: rgba(23, 101, 106, 0.34);
   background: #fffefa;
+}
 }
 
 .recent-color-row button.active {
@@ -2872,10 +3724,12 @@ button:focus-visible {
   line-height: 1;
 }
 
+@media (hover: hover) {
 .view-shape-toggle button:hover:not(:disabled) {
   border-color: transparent;
   background: rgba(23, 101, 106, 0.08);
   color: var(--accent);
+}
 }
 
 .view-shape-toggle button.active {
@@ -3063,8 +3917,10 @@ button:focus-visible {
   font-weight: var(--weight-semibold);
 }
 
+@media (hover: hover) {
 .usage-pack-stepper button:hover:not(:disabled) {
   background: var(--accent-soft);
+}
 }
 
 .usage-pack-stepper input {
@@ -3088,6 +3944,23 @@ button:focus-visible {
   appearance: none;
 }
 
+/*
+  ══════════════════════════════════════════════════════════════════════════════
+  B6（2026-09-21，用户裁决「已经没有图层的概念了，就一层即可」）：
+  **删掉**的只有"图层专属"的三组规则 —— `.usage-layer-chips`(+ button / hover / active) /
+  `.usage-layer-actions`(+ button / hover / active) / `.usage-no-layers`。
+  它们 100% 只服务「用量」tab 里那张**图层卡**（全部/当前图层按钮 + 每层一个 chip +
+  「没有图层计入用量」），卡片本批整块删除 ⇒ 这些规则在新构建里零匹配元素
+  （`_verify_B6.cjs` 打印这 3 个类的命中节点数：旧 1+2+1，新 0+0+0）。
+
+  ⚠️ **`.usage-summary-card` / `.usage-summary-head` 必须保留**（我第一版连它们一起删了，
+  构建后的 DOM 检查才发现）：改色编辑器 `UsageRecolorEditor` 的根节点
+  （`RightPanel.tsx` 里 `[data-recolor-editor="1"]` 的第一个子元素）用的就是
+  `className="usage-summary-card"`，标题行用的就是 `.usage-summary-head`。
+  删掉它们会**连带改掉改色编辑器的外观**（那才是真补丁/真回归）。
+  「用量」tab 的图层卡是**同一个类**的另一个使用者 —— 卡片删了，类还在为编辑器服务。
+  ══════════════════════════════════════════════════════════════════════════════
+*/
 .usage-summary-card {
   display: grid;
   gap: 8px;
@@ -3111,75 +3984,26 @@ button:focus-visible {
   font-weight: var(--weight-semibold);
 }
 
-.usage-summary-head span {
+/* 第 4 批：改成**直接子代** `>` —— 标题里新加的 `.help-dot` 也是个 `<span>`，
+   后代会把它一起染成 muted 小字（(0,1,1) 会压过 `.help-dot` 的 (0,1,0)），问号就废了。
+   计数徽标本来就是 `.usage-summary-head` 的直接子元素，加 `>` 对它零影响。
+   B6 之后消费方只剩改色编辑器的标题行（原图层卡的标题行已删）。 */
+.usage-summary-head > span {
   color: var(--text-muted);
   font-size: var(--font-size-caption);
 }
 
-.usage-layer-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  max-height: 62px;
-  overflow: auto;
-}
-
-.usage-layer-chips button {
-  cursor: pointer;
-  max-width: 100%;
-  min-height: 24px;
-  padding: 3px 8px;
-  border: 1px solid rgba(190, 177, 154, 0.68);
-  border-radius: 999px;
-  background: #ffffff;
-  color: var(--text);
-  font-size: var(--font-size-caption);
-  font-weight: var(--weight-semibold);
-  line-height: 1.2;
-}
-
-.usage-layer-chips button:hover:not(:disabled) {
-  border-color: rgba(23, 101, 106, 0.34);
-  background: rgba(240, 250, 249, 0.72);
-  color: var(--accent);
-}
-
-.usage-layer-chips button.active {
-  border-color: rgba(23, 101, 106, 0.72);
-  background: rgba(231, 248, 246, 0.94);
-  color: var(--accent);
-}
-
-.usage-layer-actions {
+/* `.usage-notes` 自己的外壳。图层卡在的时候，这层外观由图层卡的 `.usage-summary-card` 提供
+   （grid + gap:8px + 10px 内边距 + 1px 边 + 8px 圆角 + 暖白底）；现在只包一条提醒，
+   gap 收成 3px（`.usage-notes` 自己已经是 grid + gap:3px）。 */
+.usage-notes-card {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.usage-layer-actions button {
-  min-height: 30px;
-  padding: 0 8px;
-  border-color: rgba(190, 177, 154, 0.72);
-  background: rgba(255, 255, 255, 0.64);
-  font-size: var(--font-size-small);
-  font-weight: var(--weight-semibold);
-}
-
-.usage-layer-actions button:hover:not(:disabled) {
-  border-color: rgba(23, 101, 106, 0.32);
-  background: rgba(240, 250, 249, 0.72);
-  color: var(--accent);
-}
-
-.usage-layer-actions button.active {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: #ffffff;
-}
-
-.usage-no-layers {
-  color: var(--text-muted);
-  font-size: var(--font-size-small);
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 254, 249, 0.72);
+  color: #4b5563;
 }
 
 .usage-notes {
@@ -3241,6 +4065,24 @@ button:focus-visible {
   overscroll-behavior: contain;
 }
 
+/*
+  改色编辑器主体（`UsageRecolorEditor` 的根节点）。
+  ⚠️ 这一串声明**原来是以内联样式写在 `RightPanel.tsx` 里的**，逐条照搬到这里：
+     `display:grid; gap:10px; flex:1 1 auto; min-height:0; overflow:auto; padding-right:3px`。
+     搬出来的原因：Bug C 的根修要在手机档改 `flex` / `min-height`（见上面 `.usage-section` 那段），
+     而**内联样式 CSS 覆盖不掉**（只能 `!important`，那是补丁）。
+     换句话说：这个类让"列表"和"编辑器"这两个可滚主体**受同一套版式规则管**（下限、手机档重分配），
+     不会再出现"列表被修好了、编辑器还是 0px"这种只修一半的情况。
+*/
+.recolor-editor-body {
+  display: grid;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 3px;
+}
+
 .usage-list button {
   cursor: default;
   display: grid;
@@ -3254,9 +4096,11 @@ button:focus-visible {
   text-align: left;
 }
 
+@media (hover: hover) {
 .usage-list button:hover:not(:disabled) {
   border-color: rgba(23, 101, 106, 0.32);
   background: #fffefa;
+}
 }
 
 .usage-color-info {
@@ -3525,9 +4369,11 @@ button:focus-visible {
   color: var(--accent);
 }
 
+@media (hover: hover) {
 .layer-solo-toggle:hover:not(:disabled) {
   border-color: rgba(23, 101, 106, 0.42);
   color: var(--accent);
+}
 }
 
 .layer-list {
@@ -3567,9 +4413,11 @@ button:focus-visible {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+@media (hover: hover) {
 .layer-row:hover {
   border-color: rgba(23, 101, 106, 0.28);
   background: #fffefa;
+}
 }
 
 .layer-row.dragging {
@@ -3621,10 +4469,12 @@ button:focus-visible {
   cursor: grabbing;
 }
 
+@media (hover: hover) {
 .layer-drag-handle:hover:not(:disabled) {
   border-color: transparent;
   background: transparent;
   color: var(--accent);
+}
 }
 
 .layer-drag-handle svg {
@@ -3651,8 +4501,10 @@ button:focus-visible {
   cursor: pointer;
 }
 
+@media (hover: hover) {
 .layer-main:hover:not(:disabled) {
   background: transparent;
+}
 }
 
 .layer-title-row {
@@ -3673,7 +4525,7 @@ button:focus-visible {
   align-items: center;
   gap: 4px;
   color: var(--text);
-  font-size: 13.5px;
+  font-size: var(--font-size-control);
   font-weight: 650;
   line-height: 1.2;
 }
@@ -3681,7 +4533,7 @@ button:focus-visible {
 .layer-main strong > span {
   min-width: 0;
   color: var(--text);
-  font-size: 13.5px;
+  font-size: var(--font-size-control);
   font-weight: 650;
   letter-spacing: 0;
 }
@@ -3699,10 +4551,12 @@ button:focus-visible {
   color: var(--text-muted);
 }
 
+@media (hover: hover) {
 .layer-rename-button:hover:not(:disabled) {
   border-color: transparent;
   background: transparent;
   color: var(--accent);
+}
 }
 
 .layer-rename-button svg {
@@ -3717,7 +4571,7 @@ button:focus-visible {
 
 .layer-main span {
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: var(--font-size-small);
   line-height: 1.25;
 }
 
@@ -3746,7 +4600,7 @@ button:focus-visible {
   width: fit-content;
   margin-top: 0;
   color: rgba(41, 55, 69, 0.72);
-  font-size: 10.5px;
+  font-size: var(--font-size-caption);
   line-height: 1.2;
 }
 
@@ -3803,66 +4657,23 @@ button:focus-visible {
   color: #b93a32;
 }
 
+@media (hover: hover) {
 .mini-icon-toggle.danger:not(:disabled):hover {
   border-color: #c95d52;
   background: #fff0ee;
   color: #9c2f28;
+}
 }
 
 .hover-section {
   color: #4b5563;
 }
 
-/* ── 顶栏「中间地带」修复（981–1499px）──────────────────────────────────────
-   背景：.topbar 是四列网格。≤1500px 时固定列 230+72+360 加 padding 共吃掉 682px，
-   而中间列要装下「画布参数 321 + 命令区约 474」≈ 803px，所以单行排版需要约 1485px。
-   偏偏 .topbar-command-zone 是 flex-wrap: nowrap、无法收缩 —— 窄屏时它直接溢出自己的
-   格子、画到相邻列上面，造成按钮互相压住**并且点不到**。
-   实测（getBoundingClientRect 二维相交 + elementFromPoint 命中测试）：
-     1500px  0 重叠 / 15 命中      1400px  2 重叠 / 13 命中
-     1200px 11 重叠 / 10 命中      1000px 10 重叠 /  8 命中
-     980px   0 重叠 / 15 命中（已是三行堆叠）
-   做法：把「画布参数 + 全部按钮」整行下移，品牌与右侧控件留在第一行。
-   两行约 100px 高，比 980px 那套三行堆叠（145px）省 45px 纵向空间。
-   不缩任何字号、不隐藏任何按钮。
-   断点贴着 1500 放（1500 实测尚可、1400 起坏），1600px 及以上完全不进这段。
-
-   为什么不做「更多 ▾」菜单：本档根因是纵向不够，不是按钮太多。收进菜单会把
-   「导出图纸 / 撤销」这类常用操作变成要点两次，还要额外保证菜单的键盘可达性；
-   按钮全部留在页面上，「功能可达性」天然成立。 */
-@media (max-width: 1499px) and (min-width: 981px) {
-  .topbar {
-    /* 顺带去掉第 2 列那 84px —— 全文件没有任何元素使用 grid-column: 2，是纯死列；
-       右列由固定 360px 改为按内容自适应（其内容实测仅 169px）。
-       这两条**只在本档生效**，所以 1600px 的网格定义不变。 */
-    grid-template-columns: minmax(0, 1fr) max-content;
-    row-gap: 8px;
-  }
-
-  .brand-lockup {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .topbar-right {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .topbar-workspace {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    justify-content: flex-start;
-  }
-
-  /* 按钮左对齐；万一某些平台字体更宽导致第二行也放不下，让按钮组整体换行，
-     而不是互相重叠 —— 「宁可贵一行，也不重叠」的安全阀。 */
-  .topbar-command-zone {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-    row-gap: 6px;
-  }
-}
+/* ── 顶栏「中间地带」修复（981–1499px）—— **W1 已整段删除** ──────────────────
+   这一档原来是「四列网格在窄区间溢出 ⇒ 把整行按钮下移」的**断点补丁**（根因是
+   `.topbar-actions button{min-width:0}` 让按钮能被挤到文字被裁，见文件顶部的说明）。
+   槽位化 + `flex: 0 0 auto` + ifRoom「更多」之后，这一档没有存在理由：
+   放不下时由 App 的实测判据把导出组收进「更多」，而不是靠换行/挪行。 */
 
 @media (max-width: 980px) {
   .app-shell {
@@ -3870,36 +4681,15 @@ button:focus-visible {
     grid-template-rows: auto auto minmax(360px, 1fr) auto;
     height: auto;
     min-height: 100vh;
+    min-height: 100dvh;
     overflow: visible;
   }
 
-  .topbar {
-    grid-column: 1 / -1;
-    grid-template-columns: minmax(220px, 1fr);
-    row-gap: 8px;
-    overflow-x: auto;
-  }
-
-  .topbar-workspace {
-    grid-column: 1;
-    justify-content: flex-start;
-    padding: 0;
-  }
-
-  .topbar-params,
-  .topbar-actions {
-    justify-self: start;
-  }
-
-  .topbar-right {
-    grid-column: 1;
-    justify-content: flex-start;
-    padding: 0 10px;
-  }
-
-  .brand-lockup {
-    min-width: 220px;
-  }
+  /* W1：这里原来还有 `.topbar` / `.topbar-workspace` / `.topbar-params` /
+     `.topbar-actions` / `.topbar-right` / `.brand-lockup{min-width:220px}` 六条顶栏规则
+     （三行堆叠）。已删除 —— 顶栏在 ≤980px 与 ≤1180px 是**同一套**两行槽位栅格
+     （见文件末尾 W1.3 段），不再需要额外汇总一层。`.app-shell` 的网格与下面
+     `.left-panel` 的两列卡片**与顶栏无关**，原样保留。 */
 
   .left-panel {
     grid-column: 1 / -1;
@@ -3922,7 +4712,10 @@ button:focus-visible {
   }
 
   .tool-button {
+    /* 第 3 批 D8：条目统一 44px 高 —— 基础规则已改，这里**显式再写一次**是为了让三档
+       （基础 / 平板这里 / 手机档）都能一眼读出"44"这个值，不靠继承去猜。 */
     width: 70px;
+    height: 44px;
   }
 
   .workspace {
@@ -3940,7 +4733,7 @@ button:focus-visible {
 .ai-redraw-cost {
   font-style: normal;
   font-weight: normal;
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   color: #b06a00;
   background: #fff4e0;
   border: 1px solid #f0d9a8;
@@ -3954,7 +4747,7 @@ button:focus-visible {
   gap: 4px;
 }
 .ai-redraw-key > span {
-  font-size: 12px;
+  font-size: var(--font-size-small);
   color: #555;
 }
 .ai-redraw-key input {
@@ -3962,11 +4755,11 @@ button:focus-visible {
   padding: 6px 8px;
   border: 1px solid #d8d8d4;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   font-family: ui-monospace, Consolas, monospace;
 }
 .ai-redraw-key small {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: #999;
 }
 .ai-redraw-progress {
@@ -3977,7 +4770,7 @@ button:focus-visible {
   border-radius: 8px;
   background: #eef4ff;
   border: 1px solid #cfe0ff;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   color: #1c4f9c;
 }
 .ai-redraw-spinner {
@@ -4005,19 +4798,21 @@ button:focus-visible {
   border-radius: 8px;
   background: #3677d2;
   color: #fff;
-  font-size: 13px;
+  font-size: var(--font-size-body);
   font-weight: 600;
   cursor: pointer;
   transition: background .15s ease;
 }
+@media (hover: hover) {
 .ai-redraw-start:hover:not(:disabled) { background: #2b64b4; }
+}
 .ai-redraw-start:disabled {
   background: #c9cfd8;
   cursor: not-allowed;
 }
 /* 不花钱的「用当前这张出图纸」 */
 .ai-redraw-actions small {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: #888;
   line-height: 1.45;
   text-align: center;
@@ -4049,7 +4844,7 @@ button:focus-visible {
   border-radius: 50%;
   background: #c0392b;
   color: #fff;
-  font-size: 13px;
+  font-size: var(--font-size-body);
   font-weight: 700;
   line-height: 1;
 }
@@ -4081,7 +4876,7 @@ button:focus-visible {
 
 .error-banner-action {
   padding: 4px 10px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: var(--weight-semibold);
   white-space: nowrap;
 }
@@ -4089,67 +4884,166 @@ button:focus-visible {
 .error-banner-close {
   width: 24px;
   height: 24px;
-  font-size: 15px;
+  font-size: var(--font-size-title);
   line-height: 1;
 }
 
+@media (hover: hover) {
 .error-banner-action:hover,
 .error-banner-close:hover {
   background: #fdecec;
 }
+}
 
-/* 模型设置：收起时只占一行，点开才显示输入框 */
+/* 模型设置：输入框一直可见，点「手动指定」才展开说明 */
 .ai-model-block {
   display: grid;
   gap: 4px;
 }
 
-.ai-model-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  min-height: 26px;
-  padding: 0 8px;
+/* 自动识别可用模型：状态行（正在识别 / 已识别 / 失败）+ 手动重试 + 控制台直达 */
+.ai-detect {
+  display: grid;
+  gap: 3px;
+  padding: 5px 8px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   background: rgba(255, 253, 248, 0.7);
-  color: #4b5563;
-  font-size: 11px;
-  font-weight: var(--weight-semibold);
-  cursor: pointer;
-  text-align: left;
 }
 
-.ai-model-toggle:hover {
+.ai-detect-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 结论单独一行、允许折行：左栏很窄（实测 269px），一句话被省略号截掉就等于没说 */
+.ai-detect-status {
+  margin: 0;
+  font-size: var(--font-size-caption);
+  color: #6b7280;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.ai-detect-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-detect-retry {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: #fff;
+  color: #4b5563;
+  font-size: var(--font-size-caption);
+  line-height: 1.1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+.ai-detect-retry:hover:not(:disabled) {
   border-color: rgba(54, 119, 210, 0.5);
   color: #2b64b4;
 }
+}
 
-.ai-model-toggle em {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.ai-detect-retry:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ai-detect-link {
+  font-size: var(--font-size-caption);
+  color: #2b64b4;
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(43, 100, 180, 0.5);
   white-space: nowrap;
-  font-style: normal;
-  font-weight: var(--weight-regular);
-  color: #6b7280;
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: 10px;
 }
 
-.ai-model-caret {
-  flex: 0 0 auto;
-  color: #9aa2ad;
+@media (hover: hover) {
+.ai-detect-link:hover {
+  color: #1c4f9c;
+}
 }
 
-.ai-model-body {
-  display: grid;
+.ai-detect-raw {
+  font-size: var(--font-size-caption);
+  color: #8a8577;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.ai-detect.is-running .ai-detect-status {
+  color: #1c4f9c;
+}
+
+.ai-detect.is-ok {
+  border-color: #b7ddc0;
+  background: #f2fbf4;
+}
+
+.ai-detect.is-ok .ai-detect-status {
+  color: #21703a;
+}
+
+.ai-detect.is-warn .ai-detect-status {
+  color: #a35200;
+}
+
+/* 模型 ID 一直可见（透明），自动识别出来的会带一个「已自动识别」小标 */
+.ai-model-block.is-always {
   gap: 4px;
 }
 
-.ai-model-body input {
+.ai-model-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-model-head-label {
+  font-size: var(--font-size-small);
+  color: #555;
+}
+
+.ai-model-auto {
+  font-style: normal;
+  font-size: var(--font-size-caption);
+  color: #21703a;
+  background: #e8f7ec;
+  border: 1px solid #b7ddc0;
+  border-radius: 999px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.ai-model-more {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: #8a8577;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+.ai-model-more:hover {
+  color: #2b64b4;
+}
+}
+
+.ai-model-block.is-always input {
   width: 100%;
   min-height: 26px;
   padding: 0 8px;
@@ -4158,13 +5052,7 @@ button:focus-visible {
   background: #fff;
   color: #111827;
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 11px;
-}
-
-.ai-model-body small {
-  color: #8a8577;
-  font-size: 10px;
-  line-height: 1.4;
+  font-size: var(--font-size-caption);
 }
 
 /* 参数行下方的补充说明（例如「当前 12 是自动算出来的」） */
@@ -4175,48 +5063,16 @@ button:focus-visible {
   border-radius: 0 5px 5px 0;
   background: rgba(247, 232, 196, 0.5);
   color: #7a5a12;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   line-height: 1.35;
 }
 
 /* 参数改动后自动重算，手动刷新按钮已移除 */
 
-/* 生成失败：状态栏变红，别再像以前一样悄无声息 */
-.status-section.is-error {
-  border-color: #e0a3a3;
-  background: #fff4f4;
-}
-
-.status-section.is-error strong {
-  color: #a82222;
-  font-weight: var(--weight-semibold);
-  white-space: pre-wrap;
-}
-
-.status-section.is-error .status-pill {
-  display: none;
-}
-
-.status-copy-button {
-  align-self: start;
-  padding: 4px 10px;
-  border: 1px solid #d9a0a0;
-  border-radius: 6px;
-  background: #fff;
-  color: #a82222;
-  font-size: 11px;
-  font-weight: var(--weight-semibold);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.status-copy-button:hover {
-  background: #fdeeee;
-}
-
-.status-section.is-error span {
-  white-space: pre-wrap;
-}
+/* B7：`.status-section.is-error` / `.status-section.is-error strong` /
+   `.status-section.is-error .status-pill` / `.status-section.is-error span` /
+   `.status-copy-button` 五条已随右栏那块状态栏一起删除 —— 错误态现在由
+   画布左下角的 `.canvas-status.is-error`（见上面）与 `App` 的 `.error-banner` 承担。 */
 
 /* 屏幕高度不够时进一步压缩左栏，尽量不用上下滚动 */
 @media (max-height: 920px) {
@@ -4282,12 +5138,1419 @@ button:focus-visible {
     display: none;
   }
 
-  /* 模型设置平时不用管，屏幕矮的时候收起来（展开状态仍然显示，方便排查模型问题） */
-  .ai-model-toggle {
+  /* 屏幕矮的时候，识别状态行压缩一点（结论本身仍然一直可见） */
+  .ai-detect {
+    padding: 3px 6px;
+  }
+
+  .ai-detect-raw {
     display: none;
   }
 
-  .ai-model-body {
-    display: none;
+  /* 这一行文字不套 26px 行高（会贴到按钮上下边框上） */
+  .ai-detect-retry,
+  .ai-detect-link {
+    min-height: 0;
+    line-height: 1.5;
   }
 }
+
+/* ============================================================================
+   W1：iPad / 触屏适配（子对话 A 第 2 轮）
+
+   这一整段要么在「平板断点」里、要么在「粗指针」里，**桌面 1600×900 一条都不生效**：
+     · 平板断点 = (min-width:768px and max-width:1180px)   —— 覆盖 iPad 竖屏 768 / 横屏 1024
+                  或 (pointer: coarse and min-width:768px and max-width:1400px) —— 覆盖真实触屏平板（≤ iPad Pro 13" 的 1376）
+       ⚠️ 第 5 批给第二条加了 **1400 上限**：≥1401 的触屏（触屏笔记本 / 设备工具栏触摸模拟）走桌面版。
+       （写成逗号列表 = 二者取或；这样「按宽度验」和「按触屏验」两种方式都能生效）
+     · 粗指针块 = (pointer: coarse) —— 触屏专属手感（含手机宽度，W2 会在此基础上继续）
+   ========================================================================== */
+
+/* --- W1.0 桌面基态：遮罩在非面板断点下根本不显示（不参与布局） ---
+   第 3 批：`.panel-toggle` 已从选择器里删除 —— 顶栏那两个抽屉开关**元素已不再渲染**
+   （入口改成工具条上的 3 个面板条目，见 `App.tsx` 的 `PANEL_ENTRIES`）。 */
+.panel-scrim {
+  display: none;
+}
+
+/* --- W1.1 触屏 title 提示（由 src/useTouchGestures.ts 的 installTouchTitleTips 创建） --- */
+.touch-title-tip {
+  position: fixed;
+  z-index: 60;
+  max-width: min(280px, 72vw);
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: rgba(17, 24, 39, 0.94);
+  box-shadow: 0 10px 24px rgba(17, 24, 39, 0.28);
+  color: #ffffff;
+  font-size: var(--font-size-body);
+  line-height: 1.45;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  text-align: left;
+}
+
+/* --- W1.2 滚动穿透：整页不做下拉刷新/橡皮筋，画布区不把滚动传给页面 --- */
+html,
+body {
+  overscroll-behavior: none;
+}
+
+.workspace {
+  touch-action: none;
+}
+
+/* ============================================================================
+   W1.3 + W2.0「面板断点」：面板不再占网格列，改成浮层（iPad 侧抽屉 / 手机底部浮层）
+
+   命中范围 = (max-width: 1180px)                       ← 手机(<768) ∪ 窄窗(768–1180)，任意指针
+              ∪ (pointer: coarse) and (min-width: 768px) and (max-width: 1400px)
+                                                     ← 触屏平板（≤ iPad Pro 13" 的 1376 / 12.4" 安卓 1400）
+   与 `useMediaQuery.ts` 里的 `PANEL_LAYOUT_QUERY` **逐字一致**（渲染开关与 CSS 不会脱节）。
+
+   ⚠️ **第 5 批**（用户裁决「分辨率明显是电脑、有触屏也走桌面版」）：第二条加了 `max-width: 1400px`。
+   此前只写 `(pointer: coarse) and (min-width: 768px)` ⇒ 1920 的触屏笔记本（以及 Chrome 设备工具栏
+   开了触摸模拟的普通电脑，见 KI-040）会掉进平板/抽屉版。加 1400 上限后 ≥1401 一律走桌面网格。
+   ⚠️ 上限**不能取 1366**：iPad Pro 13"(M4) 视口是 **1376**（独立验证子代理实测），取 1366 会让它
+   走桌面版并拿到「导出用量」，等于反转 D2（iPad 不提供 Excel）⇒ 用 1400 覆盖它 + 12.4" 安卓平板。
+   桌面 1600×900（pointer: fine）两条都不命中 ⇒ 这一段一条都不生效。
+
+   这里放的是**两种形态共用**的东西：抽屉开关、遮罩、触控目标、平台裁剪、帮助气泡；
+   手机专属的「单列 + 底部浮层 + 底部工具横条」几何在文件末尾的 W2.1 段里覆盖。
+   ========================================================================== */
+@media (max-width: 1180px), (pointer: coarse) and (min-width: 768px) and (max-width: 1400px) {
+  /* 4 列 → 2 列（工具条 + 画布）；左右面板脱离网格变成浮层，不再占列宽 */
+  .app-shell {
+    grid-template-columns: 84px minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* ---- W1 顶栏：窄屏/触屏的**两行槽位栅格**（显式命名区域，不是 order + ::after 硬凑）----
+     第 1 行 = leading（侧边栏开关）+ title（品牌）+ document（撤销·重做）+ trailing
+     第 2 行 = params（画布尺寸）+ actions（导出组）
+
+     旧做法（W2）是把两层包装壳设成 `display: contents`、用 `order` 排序、再用一个
+     100% 宽的 `::after` 强制断行 —— 槽位化之后这些全部删除：
+     行与列都是**命名的**（`grid-template-areas`），谁在哪一行是读得出来的。
+
+     第 2 行放不下时（实测：手机 390px 下"尺寸组 + 导出组"共需 ~690px）由 App 的
+     ifRoom 判据把导出组整体收进「更多」——**不再靠 `overflow-x: auto` 把按钮推到屏幕外**
+     （旧做法的实测后果：`scrollWidth 834 / clientWidth 370`，导出图纸/撤销/重做点不到）。 */
+  .topbar {
+    grid-column: 1 / -1;
+    display: grid;
+    /* 第 3 批（D9/D10）：**删掉 `leading` 列**（原来放侧边栏开关，现在开关在工具条上）。
+       留一个空列会白吃 8px 的 `column-gap`，窄屏每一行都亏这 8px ⇒ 直接 4 列改 3 列。
+       行结构：第 1 行 = 品牌 + 右侧 · 第 2 行 = 参数 + **撤销/重做** + 导出组。 */
+    grid-template-columns: max-content max-content minmax(0, 1fr);
+    grid-template-areas:
+      'title  title   trailing'
+      'params document actions';
+    align-items: center;
+    align-content: center;
+    column-gap: 8px;
+    row-gap: 6px;
+    padding: 6px 10px;
+    overflow: visible;
+  }
+
+  .topbar-slot--title {
+    grid-area: title;
+    min-width: 0;
+  }
+
+  .topbar-slot--document {
+    grid-area: document;
+    margin-left: 8px; /* 窄屏空间紧：固定的 16px 组间隙收到 8px */
+  }
+
+  .topbar-slot--params {
+    grid-area: params;
+    margin-left: 0;
+  }
+
+  .topbar-slot--actions {
+    grid-area: actions;
+  }
+
+  .topbar-slot--trailing {
+    grid-area: trailing;
+    justify-self: end;
+  }
+
+  .topbar-params {
+    height: auto;
+    min-height: 44px;
+    padding: 3px 4px;
+  }
+
+  /* ⚠️ 这一条必须留在这里（不能只在手机块里写）：
+     基础规则里 `.topbar-dimension-group` 是 `height: 30px; overflow: hidden`，
+     而共用块里输入框被触控目标规则抬到 44px 高。少了 `height:auto/min-height:44px`，
+     尺寸输入框会在**平板竖屏 768px**（探针实测 y=68、group 高 30、clientH 28）被裁掉上下一截。 */
+  .topbar-dimension-group {
+    height: auto;
+    min-height: 44px;
+  }
+
+  .topbar-control-label {
+    display: none; /* 「画布板」是装饰性标签，输入框与按钮本身自解释 */
+  }
+
+  /* 导出组：**横滑兜底保留**（ifRoom 判断是"实测"的，万一某平台字体更宽导致
+     判据说放得下、实际仍差几像素，这里不至于把按钮推到屏幕外点不到） */
+  .export-actions {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: 5px;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+  }
+
+  /* 导出组里的按钮**不许被压扁**（否则文字挤成两行/被截），放不下就让外层滑动 */
+  .export-actions > * {
+    flex: 0 0 auto;
+  }
+
+  .topbar-actions {
+    flex-wrap: nowrap;
+  }
+
+  /* ---- 左栏 → **右侧**抽屉（B11 = 用户第 1 条）----
+     用户原话：「颜色、参考、素材三个工具点击后抽屉统一从右侧弹出」。
+     本段只改**定位与滑入方向**：`.left-panel` 这个元素、`openPanel === 'left'` 与
+     `leftSection` 的状态机、`.app-shell.is-left-open` 这个类名**一个字都没动**
+     ⇒ 门禁钩子（`<aside class="left-panel" data-left-section>`）与 inert / Esc / 遮罩
+     那几条路径全部沿用；桌面档（本媒体查询不命中）也**一字节不变**。
+     · 贴右边缘：`right: 0` + `left: auto`。⚠️ 必须写 `left: auto`：`width` 是确定值
+       （min(320px,88vw)），`left` / `right` / `width` 三者同时有值时 LTR 下 `right` 会被忽略
+       ⇒ 只加 `right: 0` 会"看起来没生效"。
+     · 边框与内边距跟着翻面（`border-right` → `border-left`、右侧吃 `safe-area-inset-right`）：
+       全局 `box-sizing: border-box`，1px 边框换一条边**不改几何**。
+     · 收起态 = `translateX(104%)`：与 `.right-panel` 同一口径（104% 让它**严格**落在视口右外侧，
+       而不是刚好压在边界上）。第 3 批那笔 `calc(-100% - 84px)` 的补偿**整块删除** ——
+       它存在的唯一理由是"抽屉从 `left: 84px` 起、要退到 0 的左边"，`right: 0` 之后没有这个位移。
+     · 「盖住工具条」这个病根随之消失：工具条是左侧 84px 的竖列，抽屉贴右边缘后与它零重叠
+       ⇒ 既不需要遮罩让位，也不需要给抽屉留那 84px。（`.panel-scrim` 段那条注释已同步改写。）
+     · 关闭按钮（`.panel-close-row`，portal 进抽屉）本来就 `justify-content: flex-end`
+       ⇒ 贴右之后它与右抽屉的关闭按钮落在同一处；z-index 41、遮罩 40 也与右抽屉一致。 */
+  .left-panel {
+    position: fixed;
+    left: auto;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 41;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: min(320px, 88vw);
+    padding: calc(10px + env(safe-area-inset-top, 0px)) calc(10px + env(safe-area-inset-right, 0px)) 10px 10px;
+    /* 底部留 66px：抽屉内的**可见关闭按钮**（sticky 在抽屉底）要有落脚处，
+       内容滚到底时不会压在它下面。⚠️ 这条注释在 2026-09-20 第 3 批被改写 ——
+       原文写的是"给浮动的 `.panel-toggle-left` 让位"，而那个开关**本批已删除**，
+       留着旧理由会让下一个人以为这里还在给一个不存在的东西留白。 */
+    padding-bottom: calc(66px + env(safe-area-inset-bottom, 0px));
+    overflow: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    border-left: 1px solid var(--line-strong);
+    /* ⚠️ 必须显式写 `border-right: 0`：基础规则（本文件靠前的 `.left-panel{border-right:1px …}`）
+       在抽屉档同样命中 ⇒ 只加左边框会变成"左右各 1px"两条，`box-sizing: border-box` 下
+       内容盒因此窄 1px（实测：抽屉里首张卡片 299 → 298，在 A/B 里表现为整棵子树的宽度 −1）。
+       换面 = 左 1px / 右 0，内容盒与改动前**同宽**。 */
+    border-right: 0;
+    border-bottom: 0;
+    background: var(--panel);
+    box-shadow: 0 18px 44px rgba(17, 24, 39, 0.24);
+    /* 收起态**整个滑出到右外侧**（104% = 与 `.right-panel` 同一口径，见上面那段）。 */
+    transform: translateX(104%);
+    transition: transform 0.22s ease;
+  }
+
+  .app-shell.is-left-open .left-panel {
+    transform: translateX(0);
+  }
+
+  /* ---- 第 3 批「抽屉分区」（用户裁决 B1/B2）：抽屉一次只显示点开的那一段 ----
+     ⚠️ 这里**故意没有任何分区规则**：分区是 `App.tsx` 里**条件渲染**做的
+     （`panelLayout` 命中时只渲染 `leftSection` 对应的那几块；桌面档两块都渲染）。
+     为什么不用 CSS 藏：`.left-card{display:grid}`（本文件靠前）会盖掉 UA 的 `[hidden]`，
+     走 CSS 就得再写一套特异性规则去压它；条件渲染没有这个坑，而且"不在 DOM 里"对读屏更干净。
+     门禁用的钩子是 `<aside class="left-panel" data-left-section>`。 */
+
+  /* ==========================================================================
+     B8（用户第 2 条）：**抽屉档**的「参考」卡按抽屉空间重排
+     --------------------------------------------------------------------------
+     病根（实测，改前）：`.reference-card` 是 `flex: 0 0 auto` ⇒ 高度恒等于内容
+     （iPad 225 / 手机 225 / 窄窗 227），而抽屉内容盒是 768 / 313 / 700
+     ⇒ 卡下方白扔 467 / 60 / 397 px。参考图**本来就不在卡里预览**（它是叠在画布上的：
+     `showReferenceImage` + 透明度 + 显示位置），所以"利用空间"不能靠放大一张不存在的预览图。
+
+     修法（**在容器这一层修，不打 `@media` 补丁**）：
+       ① 抽屉的盒子是**定高浮层**（平板 `top:0;bottom:0`、手机 `top:auto;bottom:rail`）
+          ⇒ 让参考卡在**只有它自己**的抽屉里吃掉除关闭行以外的全部高度：
+          `flex: 1 1 auto` + `min-height` 兜底（`min-height:0` 会让它在矮视口塌成 0）。
+       ② 卡片本来就 `display:grid`，直接改行模板：`auto … auto 1fr auto` —— 第 2 行
+          （上传/拖放区）那一轨拿走全部富余高度，6 个控件各自保持自然高度。
+          `1fr` 只在**卡片高度确定**时才解析成"剩余"；定高由 ① 的 flex 拉伸给出。
+       ③ 上传区因此变成一块**真·大拖放/预览面**：空态是整块虚线大靶子，载图后 `object-fit:contain`
+          在里面等比显示参考图（这就是"可利用的空间"最诚实的用法）。
+      ④ 最窄的那几档（手机 390 宽）图上文下会挤，用容器查询 `@container` 让它自动改**上图下文**，
+          不靠"猜设备"的媒体查询 —— 卡片自己有 `container-type: inline-size`。
+
+     ⚠️ **桌面 1600×900 一条都不生效**：这一段整个在 W1.3 的
+        `@media (max-width:1180px), (pointer:coarse) and (min-width:768px) and (max-width:1400px)`
+        里，桌面 1600 细指针两条都不命中（与 `PANEL_LAYOUT_QUERY` 逐字一致）；
+        而且选择器都限定在 `.reference-card` / `.reference-upload-zone` 内部，
+        不碰 `.left-card`、`.upload-zone` 的通用规则。
+     ⚠️ 手机档的卡片高度另在下面 W2 段覆盖（那里抽屉是内容撑高的 bottom sheet，
+        `flex-grow` 拉不动它，必须给一个显式高度）。
+     ⚠️ `min-height:0` 只加在**上传区**上：它是唯一允许被压扁的那一格；
+        6 个控件与卡头一律自然高，绝不会因为视口变矮而被挤没。
+     ========================================================================== */
+  .left-panel:has(.reference-card) .reference-card {
+    flex: 1 1 auto;
+    min-height: 380px; /* 兜底：矮视口下不塌陷；正常档位由 flex 拉伸决定，远大于它 */
+    /* 底部预留 = 抽屉内那枚 44×44 可见关闭按钮的高度 + 一点余量：
+       `flex:1 1 auto` 会让卡片一直长到抽屉底，而关闭行是**流内**的一行、必须留在屏幕上；
+       手机档实测（`_probe_B8.cjs`：手机卡 592 / 关闭行 y=680..730 / 面板可视化底 742）
+       关闭按钮的纵向区间 706..750 会正好压住最后一行 `显示位置 / 重置位置`。
+       预留 56px 后最后一行落在关闭行**上边**（实测矩形零重叠），
+       而卡片本身仍然是"一直顶到抽屉底"，不吃掉任何可视化空间 —— 这只是**让开一个真实存在的控件**，
+       不是给版式打补丁。⚠️ 桌面档没有关闭行（`.panel-close-row` 不渲染），所以这条只在抽屉档出现。 */
+    padding-bottom: 56px;
+    grid-template-rows: auto minmax(0, 1fr) auto auto auto auto;
+    container-type: inline-size;
+    container-name: refcard;
+  }
+
+  /* 卡头保持自然高（两行文字 + 状态徽标） */
+  .left-panel:has(.reference-card) .reference-card > .left-card-header {
+    align-self: start;
+  }
+
+  /* ---- 上传/拖放区 = 吃掉富余高度的那一格 ---- */
+  .reference-card .reference-upload-zone {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 8px;
+    align-content: stretch;
+    align-items: stretch;
+    justify-content: stretch;
+    min-height: 0;
+    padding: 8px;
+    overflow: hidden;
+  }
+
+  /* 空态：`<img>` 不在 DOM 里 ⇒ 首格就是文字块，让它自己居中占满整块大靶子 */
+  .reference-card .reference-upload-zone:not(.has-image) .upload-zone-text {
+    grid-area: 1 / 1;
+    z-index: 1;
+    align-content: center;
+    justify-items: center;
+    gap: 6px;
+  }
+
+  /* 载图后：左边大预览 + 右边一条窄的文字条（宽卡）。
+     窄卡（≤380px）由下面的容器查询翻成"图在上、字在下"。 */
+  .reference-card .reference-upload-zone.has-image {
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  /* ⚠️ 这里要的是「**图框**占满那一格、图在框里等比完整显示」，不是「图按自然尺寸显示」。
+     区别很实在：`03_像素画_皮卡丘.png` 只有 **98×98**（597 B，实测），
+     只改 `max-width/max-height` 的话它就还是 98×98 —— 卡里 400px 高的富余空间白给。
+     所以给 `img` 一个**确定尺寸**（100%×100%，那一格是 `minmax(0,1fr)` ⇒ 高度确定）
+     + `object-fit: contain`：大图缩小后完整可见，小图**放大去填满图框**。
+     `contain` 保证永不裁切、永不拉伸变形（这是参考图，形状必须准）。 */
+  .reference-card .reference-upload-zone.has-image img {
+    grid-area: 1 / 1;
+    justify-self: center;
+    align-self: center;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    object-fit: contain;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .reference-card .reference-upload-zone.has-image .upload-zone-text {
+    grid-area: 1 / 2;
+    z-index: 1;
+    align-content: center;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+    gap: 0;
+    max-width: 130px;
+    padding-left: 8px;
+    border-left: 1px dashed rgba(148, 182, 181, 0.55);
+  }
+
+  /* 卡头那行小徽标（未选择图片 / 已选择）在抽屉里跟着卡头走，别被 1fr 拉变形 */
+  .reference-card > .left-card-header,
+  .reference-card > .ref-row,
+  .reference-card > .ref-row-actions {
+    min-height: 0;
+  }
+
+  /* ---- 窄卡（手机 390 宽那档实测卡宽 350）的**容器查询**：大靶子里"图在上、字在下"就不会挤。
+       容器查询而不是媒体查询：判据是**这张卡自己的宽度**，与"这是谁的设备"无关。
+       兜底：不支持 `@container` 的浏览器只是维持"图 / 文字条"两行，功能与可点性不受影响。 ---- */
+  @container refcard (max-width: 380px) {
+    .reference-card .reference-upload-zone.has-image {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr) auto;
+    }
+
+    .reference-card .reference-upload-zone.has-image img {
+      grid-area: 1 / 1;
+    }
+
+    .reference-card .reference-upload-zone.has-image .upload-zone-text {
+      grid-area: 2 / 1;
+      max-width: none;
+      padding-left: 0;
+      padding-top: 6px;
+      border-left: 0;
+      border-top: 1px dashed rgba(148, 182, 181, 0.55);
+    }
+
+    .reference-card .reference-upload-zone:not(.has-image) .upload-zone-text {
+      gap: 8px;
+    }
+  }
+
+  /* ==========================================================================
+     B17（用户第 15 轮追加）：素材抽屉里「导入图片」与「AI 生成」两张卡**分掉富余空间**
+     --------------------------------------------------------------------------
+     背景：B16 把「参数调节」整块搬去右抽屉 ⇒ 素材抽屉只剩两张卡。实测（iPad 1024×768）：
+     内容总高 **490px**、可用高 **702px**（768 − 底部 66px 给关闭行留白）⇒ **白扔约 212px**。
+
+     修法与 B8 同源（都在容器这层修，不打设备补丁）：
+       · 「导入图片」卡吃掉**主要**富余（`flex: 3 1 auto`），并把它的第 2 行
+         （`.upload-zone`）设成 `minmax(0,1fr)` —— 空态就成了一块**大虚线靶子**，
+         载图后是**大预览图**（等比完整显示），这才是"空间最诚实的用法"。
+       · 「AI 生成」卡也分一小份（`flex: 1 1 auto`）：它 5 行都被控件占满、没有可放大的东西，
+         所以把多出来的高度用 `align-content: space-between` **均摊进行距**，
+         而不是把某个控件拉成一大块（那会很难看）。
+     ⚠️ 桌面 1600×900 一条都不生效：本段整个在抽屉档媒体查询里，
+        且选择器要求 `.left-panel` 里**同时有** `.image-card` 与 `.ai-card`（桌面左栏是常驻列、
+        不进这个媒体查询）⇒ 桌面 DOM/几何 Δ=0（门禁有反向断言）。
+     ⚠️ `min-height` 是**地板**：矮视口（窄窗 700 / 手机）下 flex 拉不动时也不许塌成 0。
+     ========================================================================== */
+  .left-panel:has(.image-card):has(.ai-card) .image-card {
+    flex: 3 1 auto;
+    min-height: 200px;
+    grid-template-rows: auto minmax(0, 1fr);
+    align-content: stretch;
+  }
+
+  .left-panel:has(.image-card):has(.ai-card) .image-card .upload-zone {
+    min-height: 96px;
+  }
+
+  /* 载图后：预览图占满那一格、等比完整显示，文字挪到右侧一列（与 B8 参考卡同一口径） */
+  .left-panel:has(.image-card):has(.ai-card) .image-card .upload-zone.has-image {
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+    grid-template-rows: minmax(0, 1fr);
+    justify-content: stretch;
+    align-content: stretch;
+  }
+
+  .left-panel:has(.image-card):has(.ai-card) .image-card .upload-zone.has-image img {
+    grid-area: 1 / 1;
+    justify-self: center;
+    align-self: center;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    object-fit: contain;
+  }
+
+  .left-panel:has(.image-card):has(.ai-card) .image-card .upload-zone.has-image .upload-zone-text {
+    grid-area: 1 / 2;
+    align-content: center;
+    justify-items: start;
+    gap: 2px;
+    max-width: 140px;
+    padding-left: 8px;
+    border-left: 1px dashed rgba(148, 182, 181, 0.55);
+  }
+
+  .left-panel:has(.image-card):has(.ai-card) .ai-card {
+    flex: 1 1 auto;
+    min-height: 330px;
+    max-height: 480px;
+    align-content: space-between;
+  }
+
+  /* ==========================================================================
+     B22（用户 2026-09-22 反馈）：「上传的图纸预览比图纸的名字占比还要小」——**抽屉档**这一半
+     --------------------------------------------------------------------------
+     改动前实测（iPad 1024×768，`_measure_upload.cjs`）：
+       · `.upload-zone.has-image` 是**两栏**：图 `minmax(0,1fr)` 拿到 **107** 宽，
+         名字那一栏 `max-width:140px` 拿到 **140** 宽 ⇒ **名字栏比图栏还宽**（用户看到的就是这个）；
+       · 竖图 900×1350 在 `contain` 下画出来只有约 **98×148** 的一条；
+       · 文件名被截 **23px**（131 可见 / 154 需要）。
+     修法两条，都在这一层：
+       ① **名字挪到图下方**，占一条**通栏窄带**（一行、省略号、虚线分隔）⇒ 图栏拿到整幅宽度，
+          名字再也不可能"比图占得多"；
+       ② 给「导入图片」卡一个**高度地板 300px**（B17 是 200），让富余高度落到**图那一格**上
+          （竖图唯一的放大方向就是高度）⇒ 画出来的图显著变大。
+     ⚠️ 这个地板只在这段（抽屉档 + 同时有 .image-card/.ai-card）生效；AI 卡一个像素没动
+        （它 5 行控件是自然高，缩它会把内容挤出去 —— B17 的 330 地板先例）。
+     ========================================================================== */
+  .left-panel:has(.image-card):has(.ai-card) .image-card {
+    min-height: 300px;
+  }
+
+  /* ⚠️ AI 卡改成**按内容自然高**（`flex: 0 0 auto`）+ 行距不再均摊（`align-content: start`）：
+     富余高度**全给图片卡**（用户抱怨的是预览太小）。
+     第一版只把图片卡抬到 300、没管 AI 卡 ⇒ iPad 上 AI 卡被压到 330 地板，而它 5 行控件自然高约
+     **382**（实测行高 49/64.2/70.9/92/62/44）⇒ 内容会溢出卡片 **52px**。这是不能接受的"拿缺陷换缺陷"。
+     改成自然高之后：AI 卡 406（= 382 + 内边距，一行都不挤）、图片卡拿剩下的全部。
+     副作用（如实登记）：iPad 抽屉内容 300 + 10 + 406 = 716 > 702 ⇒ **抽屉会多出约 14px 的滚动**
+     （B17 当初做到"iPad 不滚动"，本批为"预览更大"换掉了这条 —— 用户抱怨的正是预览太小）。 */
+  .left-panel:has(.image-card):has(.ai-card) .ai-card {
+    flex: 0 0 auto;
+    align-content: start;
+  }
+
+  .left-panel:has(.image-card):has(.ai-card) .image-card .upload-zone.has-image {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .left-panel:has(.image-card):has(.ai-card) .image-card .upload-zone.has-image .upload-zone-text {
+    grid-area: 2 / 1;
+    /* 名字与格式**并成一行**（原来是两行 41px），省下的高度全给图那一格 */
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 6px;
+    max-width: none;
+    padding-left: 0;
+    padding-top: 4px;
+    border-left: 0;
+    border-top: 1px dashed rgba(148, 182, 181, 0.55);
+  }
+
+  /* 上传区的内边距也收一点：这里是"预览越大越好"的场景，不是留白场景 */
+  .left-panel:has(.image-card):has(.ai-card) .image-card .upload-zone.has-image {
+    padding: 6px 10px;
+  }
+
+  /* ---- 右栏 → 右侧抽屉（现在只有「调色盘 / 用量」两个 tab） ---- */
+  .right-panel {
+    position: fixed;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 41;    width: min(360px, 88vw);
+    padding: calc(12px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px))
+      calc(12px + env(safe-area-inset-bottom, 0px)) 12px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    border-left: 1px solid var(--line-strong);
+    border-top: 0;
+    background: var(--panel);
+    box-shadow: 0 18px 44px rgba(17, 24, 39, 0.24);
+    transform: translateX(104%);
+    transition: transform 0.22s ease;
+  }
+
+  .app-shell.is-right-open .right-panel {
+    transform: translateX(0);
+  }
+
+  /* ---- 第 3 批：原来的「抽屉开关（顶栏 leading 槽位）」规则整段删除 ----
+     那段（`.panel-toggle` 的 44×44 方块 + `.is-left-open [data-panel-toggle='left']` 的高亮）
+     随顶栏那两个开关一起退场：开关元素不再渲染，留着规则只会让下一个人以为它还在。
+     打开/关闭抽屉的出口现在是：① 工具条上的 3 个面板条目（可反复切换分区）；
+     ② 抽屉内的可见关闭按钮（`.panel-close-button`，见下）；③ Esc；④ 点遮罩。 */
+
+  /* ---- 抽屉内的**可见关闭按钮**（APG Dialog(Modal)：Windows under a modal dialog are inert
+     + 要有可见关闭按钮）。挂在抽屉 DOM 的最后一个子节点上（portal），
+     `margin-top: auto` 把它推到抽屉底部、`position: sticky; bottom: 0` 让它滚到哪儿都看得见。
+     底部本来就为旧的浮动开关留了 66px 的 padding，所以**布局一行都不动**、也不盖内容。
+
+     🔴 B11 补的一行 `order: 1`（**为什么不能只靠 `margin-top: auto`**）：
+     这个关闭行是 `WorkspaceCanvas` 用 **portal 挂进抽屉**的，它**不属于 `App` 的 children 序列**
+     ⇒ 抽屉里的分区被换掉时（「素材 ↕ 参考」是条件渲染，整段卸载再挂载），React 只对**自己知道**
+     的那串兄弟节点做插入/删除，新挂上来的卡片可能被插到**关闭行之后** ⇒ 这个行落到了 DOM 的第一位，
+     `margin-top: auto` 与 `sticky bottom: 0` 都失效：**关闭按钮会跳到抽屉顶部、压在卡头上**
+     （实测 iPad 1024×768「参考」态：按钮 y=139..189，而"刚打开"态是 y=658..702）。
+     取证：`%TEMP%\b11_impl\_probe_refclose.cjs`（基线 c721cfa 与本批**逐字节相同** ⇒ 这不是本批引入的，
+     但本批把"三个条目都从右侧开、来回切"变成了主路径，所以顺手根修）。
+     `order` 只改**视觉顺序**、不改 DOM 顺序 ⇒ 与"React 何时插入"彻底解耦，一行覆盖两个抽屉
+     （`.left-panel` / `.right-panel` 都是 `display:flex; flex-direction:column`）。 */
+  .panel-close-row {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    display: flex;
+    justify-content: flex-end;
+    /* `margin-top: auto` 把它推到抽屉底部；`order: 1`（所有卡片都是默认的 0）
+       **把"视觉位置"与"DOM 位置"解耦** —— 原因见上面那段 🔴 说明。 */
+    order: 1;
+    margin-top: auto;
+    padding-top: 6px;
+  }
+
+  .panel-close-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
+    border: 1px solid rgba(17, 24, 39, 0.14);
+    border-radius: 12px;
+    background: rgba(255, 253, 248, 0.96);
+    box-shadow: var(--shadow-soft);
+    color: #374151;
+  }
+
+  .panel-close-button svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* `.zoom-controls` 不必再给右下角的浮动开关让位（开关已经不在画布上了）——
+     基础规则里的 right: 14px 现在直接生效，这里不再覆盖。 */
+
+  /* ---- 遮罩：点一下就关 ----
+     第 3 批：遮罩**保持整屏**（`inset: 0`），改成把**工具条抬到遮罩之上**（见下面的 `.tool-rail{z-index:42}`）。
+     为什么不用"遮罩让开工具条那 84px"那种几何做法：那样工具条旁边会剩一条**既没被压暗、
+     又看到半截顶栏品牌**的竖条（1024×768 实测截图里就是"克斯拼豆 / 52 * 5"被切成两半），很脏。
+     现在是"全屏压暗 + 工具条浮在最上层"：视觉上明确读成"工具条仍可用"，也少一个几何耦合。 */
+  .panel-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(17, 24, 39, 0.32);
+  }
+
+  /* 工具条要**浮在遮罩之上**（40 < 42）：它有 3 个面板条目，抽屉开着时是"切换分区"的唯一入口。
+     同时它在抽屉（41）之上也无妨 —— 两者几何上不重叠：B11 之后**两个抽屉都贴右边缘**
+     （`.left-panel` 也从右侧滑出，见上面那段），而工具条是左侧 84px 的竖列。
+     工具浮层（`.tool-options`）的 z-index 更高，仍会盖住工具条。 */
+  .tool-rail {
+    z-index: 42;
+  }
+
+  /* ---- 平台裁剪：iPad 上不渲染 3D 预览与语言切换 ----
+     只改「是否渲染」，数据模型 / i18n key / 组件实现一个都没动。
+     AI 来源历史（ai-card，同时是 AI / 非 AI 模式开关）、参考图、文字/形状工具全部保留。 */
+  .left-card.preview-card {
+    display: none;
+  }
+
+  .language-toggle {
+    display: none;
+  }
+
+  /* ---- 左栏在抽屉里改单列，别用 ≤980 那套两列卡片 ---- */
+  .left-panel .left-card {
+    flex: initial;
+  }
+
+  /* ---- tap 目标 ≥44×44 已**整块搬到 `@media (pointer: coarse)`**（见本文件 W1.4 段）----
+     原因（KI-002，2026-09-19 由 `task/fix-44px` 实测钉死）：这一段的媒体查询是
+     `(max-width: 1180px), (pointer: coarse) and (min-width: 768px) and (max-width: 1400px)`，
+     **细指针的 1000–1180px 窗口也会命中**（第 5 批前则是"任意宽度的粗指针也命中"）。
+     原来把 `.param-row` 第 3 列改成 44px、并给行内控件加 `min-height:44px !important`，
+     于是**鼠标用户的窄窗口**里参数行从 26px 被撑到 44px（实测 `numH=44 / dy=-11 / sameLine=false`），
+     而 44px 只在触屏上才有意义 ⇒ 「命中区大小」与「布局断点」必须解耦。
+     现在这里**一条 44px 规则都不留**；触屏那套在 `@media (pointer: coarse)` 里，
+     且行内控件改用**隐形命中区**而不是撑高（视觉行高不变）。 */
+
+  /* 帮助气泡在抽屉里往右伸会跑出屏幕 ⇒ 触屏上改成向下展开并限宽 */
+  .help-dot::after {
+    left: 0;
+    top: calc(100% + 8px);
+    width: min(240px, 64vw);
+    transform: none;
+  }
+
+  .help-dot::before {
+    display: none;
+  }
+
+  .help-dot:focus::after,
+  .help-dot:active::after {
+    transform: none;
+  }
+
+  /* 触屏点按不要 300ms 双击缩放、不要长按弹出系统菜单 */
+  .canvas {
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  .app-shell {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* ============================================================================
+   W1.4 粗指针专属（含手机宽度，W2 会在这里继续加）
+   ========================================================================== */
+@media (pointer: coarse) {
+  .app-shell {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ---- 主操作按钮：直接撑到 44×44 ----
+     它们不在「行内三列栅格」里，撑高不会挤坏任何布局。 */
+  .app-shell button,
+  .app-shell [role='tab'],
+  .app-shell a[href] {
+    min-height: 44px !important;
+    min-width: 44px !important;
+  }
+
+  /* `.param-number-input` 要排除：它是参数行第 3 列的**行内**输入框（编辑态才出现），
+     撑到 44px 会把那一行顶高（KI-002）。命中区由同格的 `.param-number` 按钮负责。 */
+  .app-shell select,
+  .app-shell input:not([type='range']):not([type='checkbox']):not([type='radio']):not(.hidden-input):not(.param-number-input) {
+    min-height: 44px !important;
+  }
+
+  /* ---- 行内控件：**不撑高**，用隐形命中区保证 44×44（KI-002 / KI-001 的修法）----
+     背景：`@media (pointer: coarse)` 原来只写了 `min-height:44px`，行内控件被顶高后
+     把所在的行也顶高（实测参数行 26px → 44px、数字框顶边比滑条高 11px、`sameLine=false`）。
+     现在视觉尺寸一律不动，只用**不占位、不绘制**的伪元素把可触面积扩到 44×44。 */
+  .left-panel .param-row > .param-number,
+  .left-panel .ref-row-actions .reference-reset-button,
+  .left-panel .ref-row-actions .reference-placement-toggle button {
+    position: relative;
+  }
+
+  /* 参数行第 3 列由 34px 放宽到 44px：**只放宽列宽、不抬高度** —— 数字按钮因此拿到
+     真实的 44px 宽度（不需要横向外扩，也就不会给 `.param-row` 造出横向溢出），
+     高度仍由下面的 `min-height:22px` 保持 22px。 */
+  .left-panel .param-row,
+  .left-panel .ref-row {
+    grid-template-columns: 58px minmax(0, 1fr) 44px;
+  }
+
+  /* ---- W3（R3）：把"行的 44px"从 `.help-dot` 身上**解耦** ----
+     实测（第 1 阶段 `W3-命中区\raw\rowheight_hideall.json`）：粗指针下参数行之所以是 44px，
+     完全由 `.help-dot` 的 44×44 盒子撑起 —— 把 5 个问号隐藏后前 3 行掉到 26px。
+     而用户裁决⑨（W6 执行）会删掉「宽度」2 个 +「色数上限」1 个问号 ⇒ 那两行会掉到 26px，
+     但 `.param-number::after{top/bottom:-11px}` 的命中盒仍是 44px 高 ⇒ 上下各探出 9px，
+     与邻行命中盒重叠（行距 29px < 44px）。
+     这里显式声明 44px，行高不再依赖问号是否存在。**今天视觉零变化**：问号还在，行本来就是 44px。
+     ⚠️ 只加在 `.left-panel .param-row` 上：参考卡里没有任何 `.help-dot`（不会被⑨影响），
+     而它的 `.ref-row` 今天是 26/32px，加 44px 会把参考卡顶高 —— 那不是零变化。 */
+  .left-panel .param-row {
+    min-height: 44px;
+  }
+
+  .left-panel .param-row > .param-number {
+    min-height: 22px !important;   /* 基础规则 `.param-row > .param-number{min-height:22px}` */
+    min-width: 0 !important;
+  }
+
+  /* 列宽已经给了 44px ⇒ 这里**只做纵向外扩**（上下各 11px，22+22=44）。
+     ⚠️ 千万别再做 `left:-5px/right:-5px`：按钮本来贴着行的右边缘，
+     横向外扩会让 `.param-row` 的 `scrollWidth - clientWidth` 变成 5px（实测过），
+     而门禁的「不溢出」判据正是看这个值。 */
+  .left-panel .param-row > .param-number::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -11px;
+    bottom: -11px;
+  }
+
+  /* W3（R3）：数字编辑框抬到 44 高（改前 44×24，高度不达标）。
+     KI-002 的病根是**细指针**下 26px 的行被行内控件顶高；这里行本身已经是 44px
+     （见上面的 `.left-panel .param-row{min-height:44px}`），所以抬到 44 不会改变行高
+     —— 改前/改后逐档实测：行高仍是 44，卡高与左栏溢出都不变。 */
+  .left-panel .param-row > input.param-number-input {
+    min-height: 44px !important;
+  }
+
+  .left-panel .ref-row-actions .reference-reset-button {
+    min-height: 30px !important;
+    min-width: 0 !important;
+  }
+
+  .left-panel .ref-row-actions .reference-reset-button::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -8px;
+    bottom: -8px;
+  }
+
+  .left-panel .ref-row-actions .reference-placement-toggle button {
+    min-height: 26px !important;
+    min-width: 0 !important;
+  }
+
+  .left-panel .ref-row-actions .reference-placement-toggle button::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -10px;
+    bottom: -10px;
+  }
+
+  /* ---- `?` 帮助点（KI-001）----
+     触控命中区**仍是 44×44**（元素盒子不变 ⇒ 卡片标题行高不变）；
+     变的只是「可见圆圈」的画法：原来元素盒子本身就是圆圈（44×44），
+     现在用硬停 radial-gradient 把圆圈画到 **19px 直径**（8.5px 半径的填充 + 1px 描边）。
+     ⚠️ 为什么不用伪元素画圆：`.help-dot::after`（L1594）与 `.help-dot::before`（L1617）
+     是 tooltip 气泡与箭头；虽然 `.params-card/.image-card/.ai-card .image-help-dot` 那几处把气泡
+     `display:none` 掉了（L1662-1668），但**别的** `.help-dot` 还在用它们 ⇒ 统一用 background 画圆最省事。 */
+  .app-shell .help-dot {
+    min-width: 44px !important;
+    min-height: 44px !important;
+    border: 0;
+    background: radial-gradient(
+      circle at 50% 50%,
+      var(--accent-soft) 0 8.5px,
+      rgba(23, 101, 106, 0.32) 8.5px 9.5px,
+      rgba(0, 0, 0, 0) 9.5px
+    );
+    font-size: var(--font-size-small);
+    cursor: pointer;
+  }
+
+  /* 第 4 批（A5）：数据来源/许可证明细的 `?` 入口与 `.help-dot` **同构**：
+     命中区抬到 44×44，但可见圆圈仍画成 19px（硬停 radial-gradient）。
+     ⚠️ 用 `.app-shell` 前缀（0,2,0）压过基础规则的单类（0,1,0）—— 与上面 `.help-dot` 同一手法。 */
+  .app-shell .brand-source-toggle {
+    min-width: 44px !important;
+    min-height: 44px !important;
+    border: 0;
+    background: radial-gradient(
+      circle at 50% 50%,
+      var(--accent-soft) 0 8.5px,
+      rgba(23, 101, 106, 0.32) 8.5px 9.5px,
+      rgba(0, 0, 0, 0) 9.5px
+    );
+    font-size: var(--font-size-small);
+  }
+
+  /* 展开态在触屏档也要看得见：选择器同样要挂 `.brand-source-details[open]`（见基础规则那段注释）。
+     (0,3,0) 压过上面的 `.app-shell .brand-source-toggle`（0,2,0）⇒ 实心圆点仍是 **19px**，
+     而不是 44px 的实心大圆。 */
+  .app-shell .brand-source-details[open] .brand-source-toggle {
+    background: radial-gradient(
+      circle at 50% 50%,
+      var(--accent) 0 8.5px,
+      var(--accent) 8.5px 9.5px,
+      rgba(0, 0, 0, 0) 9.5px
+    );
+  }
+
+  /* iOS 聚焦输入框会整页放大 ⇒ 字号必须 ≥16px。
+     原来这条写在布局块（`max-width:1180px` ∪ 粗指针）里，连**纯鼠标的窄窗口**也一起改字号 ⇒ 一并解耦。 */
+  .app-shell input,
+  .app-shell select,
+  .app-shell textarea {
+    font-size: max(16px, 1em) !important;
+  }
+
+  /* 触屏没有悬停：把鼠标专有的「悬停才出现」改成「聚焦/按下就出现」 */
+  .app-shell .help-dot:focus::after,
+  .app-shell .help-dot:active::after {
+    opacity: 1;
+  }
+}
+
+/* ============================================================================
+   W3（R3）细指针命中区：≥24×24（WCAG 2.5.8 AA），**可见圆尺寸一点不变**（用户决策⑭）
+   ----------------------------------------------------------------------------
+   与上面的粗指针那套**完全同构**：只垫"盒子"、不改可见圆 —— 圆仍用硬停
+   radial-gradient 画（粗指针画到 19px，这里画到 16px；`.mini` 14px）。
+   多出来的 4px（`.mini` 5px）用 `margin:-4px`（`-5px`）在布局上抵消 ⇒
+   盒子是 24×24（真实可点区），**布局占位与改前逐像素相同**：行高 26/30、参数卡高、
+   左栏滚动溢出全部不变（改前/改后逐档实测见报告 §3）。
+   `flex:0 0 auto` 是必须的：改前「色数上限」的问号被 flex 压到 6.83px 宽（实测），
+   可见圆与命中盒会跟着被压扁 —— 这是要修的真缺陷。
+   ⚠️ 覆盖范围 = **⑨ 之后仍然存在的问号**：参数卡标题 +「容差」行 + 图片卡 + AI 卡 + `.mini`。
+   「宽度」行的 2 个与「色数上限」的 1 个问号由用户裁决⑨删除，这里**故意不垫**：
+   它们此刻与滑条只隔 5~17px，垫到 24 必然产生"问号×问号 3px / 问号×滑条 5px"的
+   命中重叠（实测数字见报告），而⑨会把它们整体删掉。⑨ 落地后本块无需改动。
+   ========================================================================== */
+@media (pointer: fine) {
+  .app-shell .params-card .left-card-header .help-dot,
+  .app-shell .params-card .param-row:nth-child(3) .help-dot,
+  .app-shell .image-card .help-dot,
+  .app-shell .ai-card .help-dot,
+  .app-shell .help-dot.mini {
+    box-sizing: content-box;
+    width: 16px;
+    height: 16px;
+    padding: 4px;
+    margin: -4px;
+    flex: 0 0 auto;
+    border: 0;
+    background: radial-gradient(
+      circle at 50% 50%,
+      var(--accent-soft) 0 7px,
+      rgba(23, 101, 106, 0.32) 7px 8px,
+      rgba(0, 0, 0, 0) 8px
+    );
+  }
+
+  .app-shell .help-dot.mini {
+    width: 14px;
+    height: 14px;
+    padding: 5px;
+    margin: -5px;
+    background: radial-gradient(
+      circle at 50% 50%,
+      var(--accent-soft) 0 6px,
+      rgba(23, 101, 106, 0.32) 6px 7px,
+      rgba(0, 0, 0, 0) 7px
+    );
+  }
+
+  /* 卡片标题里的问号被 `.left-card-header strong{overflow:hidden}`（基础规则 L1400-1405，
+     为了给长标题做省略号）裁掉 —— 实测：24px 的盒子只量到 24×17。这里把裁剪方式换成
+     `overflow:clip` + `overflow-clip-margin:8px`：省略号截断照旧（文字仍被截断、不会外溢），
+     只是允许问号的 24×24 命中盒完整参与命中测试。**标题行高与卡片高度一点不动**（见报告 §3）。 */
+  .app-shell .left-card-header strong.field-label-with-help {
+    overflow: clip;
+    overflow-clip-margin: 8px;
+  }
+
+  /* `.param-number` 22px → 24px：行高 26/30px 装得下（按钮本身透明无边框，
+     只有 hover 底色会高 2px），行高与卡高不变。 */
+  .left-panel .param-row > .param-number {
+    min-height: 24px;
+  }
+}
+
+@media (pointer: fine) and (min-width: 1181px) {
+  /* `.mini` 的气泡是按"元素 padding 盒"定位的（基础规则 `left: calc(100% + 9px)`）：
+     盒子从 14px 变成 24px 会把气泡往右推 11px ⇒ 这里用等值绝对偏移补回来，
+     气泡的视觉位置与改前一致（22px = 改前的 1px 边框 + 12px 盒 + 9px；
+     18px = 1px + 12px + 5px）。窄窗那套气泡位置见下一个块。 */
+  .app-shell .help-dot.mini::after {
+    left: 22px;
+  }
+
+  .app-shell .help-dot.mini::before {
+    left: 18px;
+  }
+}
+
+@media (pointer: fine) and (max-width: 1180px) {
+  /* 窄窗（含细指针平板）里 `.help-dot::after` 被布局块改成"向下展开的气泡"
+     （`left:0; top: calc(100% + 8px)`，见上面 W1 段）。padding 盒从 12px 变成 24px
+     会把气泡往下推 12px ⇒ 用等值绝对偏移补回来（20px = 改前的 12px 盒 + 8px）。 */
+  .app-shell .help-dot.mini::after {
+    top: 20px;
+  }
+}
+
+/* ============================================================================
+   W2：手机适配（子对话 A 第 3 轮）
+
+   断点 @media (max-width: 767px)：与 W1 的平板断点（≥768）无缝衔接、不重叠；
+   与 PANEL_LAYOUT_QUERY 的并集一致。桌面 1600×900 一条都不生效。
+
+   手机形态：**单列**（顶栏 / 画布 / 底部工具栏），左右面板 → **底部浮层**，
+   工具条（13 个工具）→ **底部横条**，顶栏由「44px 触控目标撑出的 300px 高」收折成两行。
+   ========================================================================== */
+
+/* ============================================================================
+   B19（用户第 15 轮第 5 条）：**平板/窄窗抽屉档**的右抽屉装不下「用量 + 视图 + 格子 + 参数调节」
+   ----------------------------------------------------------------------------
+   症状（iPad 1024×768 实测，诊断脚本 `_dbg_b19_sections.cjs`）：
+     右抽屉 768 高。`.usage-section` 是 `flex:1 1 auto; min-height:0` 的那一个，于是被其它段
+     （视图 262 + 格子 61 + 参数 320 + 关闭行 50 + 段间距）挤成 **13px**（只剩「用量」标题那一行），
+     而它里面的列表有 `min-height:162px`、父级又是 `overflow-y:auto` ⇒ **列表整块被裁掉**：
+     `elementFromPoint` 打在列表行上，命中的是「格子」那段的文案 ⇒ **手指点不中任何一行**；
+     而程序化 `button.click()` 能正常打开改色编辑器 ⇒ 纯命中/裁切问题，不是事件问题。
+     用户第 5 条要的「点纵向列表里的颜色 ⇒ 改色」在 iPad 上因此**根本用不了**。
+   为什么现在才暴露：B10 设计这个抽屉时里面**只有用量**，不会发生这种挤压；而右抽屉里其实一直
+   还渲染着 `rightTab === 'palette'` 分支的「视图 / 格子」两段（`RightPanel.tsx` 那处**没有**
+   `!drawerMode` 把关），B16 又把「参数调节」搬进「颜色」抽屉 ⇒ 三块挤一个 768 高的盒子。
+   修法：把**手机档那段已经验证过的"Bug C 根修"原样搬到平板/窄窗档**（同一组三条规则）：
+     ① 抽屉自己当唯一滚动容器（`.right-panel:has(.usage-section){overflow:auto}`）；
+     ② 用量段不再 `flex:1`、不再自己裁（`flex:0 0 auto; overflow:visible`）⇒ 拿回**自然高**；
+     ③ 段内列表 / 编辑器 `flex:0 0 auto; min-height:0` ⇒ 按内容长开，不再被压成 0。
+   ⇒ 打开「颜色」抽屉时**用量列表在最上面**（DOM 第一段）、每一行都能点；参数调节在下面，滚动可达。
+   ⚠️ 与手机档同一口径：这修的是「从完全不可达 → 可达」，不是「一打开就全看得见」。
+   ============================================================================ */
+@media (max-width: 1180px), (pointer: coarse) and (min-width: 768px) and (max-width: 1400px) {
+  .right-panel:has(.usage-section) {
+    overflow: auto;
+  }
+
+  .usage-section {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
+  .usage-section > .usage-list,
+  .usage-section > .recolor-editor-body {
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  /* ---- W2.1 单列骨架 ---- */
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* ---- 第 3 批（B3/D11/B6）：手机顶栏**收成 1 行**，品牌与铭牌整块不要 ----
+     改动前是「第 1 行 = 品牌 + 撤销/重做 + GitHub/语言」+「第 2 行 = 尺寸 + 导出」共 2 行。
+     390×844 上第 1 行只服务"品牌"（`.topbar-right` 本来就 `display:none`），横向可省的
+     96px 全给了画布；省下来的这一整行高度转给底部工具条（13 条 @44/3 = 2 行，101px）。
+     行结构：`params | document | actions`（trailing 在手机上本来就是空的）。
+     ⚠️ 只改 `grid-template-areas`，**不动槽位的 `grid-area` 声明** —— 那几条在共用块里，
+        平板也要用；这里把同一个名字重新排成一行即可。 */
+  .topbar {
+    grid-template-columns: max-content max-content minmax(0, 1fr);
+    grid-template-areas: 'params document actions';
+  }
+
+  /* 品牌（logo + 应用名 + 一句状态）在手机上整体不显示（用户裁决 B6）。
+     ⚠️ `display:none` 而不是 `flex:0 1 96px`：名字再短也占一行高，而手机顶栏已经只留 1 行。
+     隐藏后「这张图多大了」改由画布角上的 `.board-chip` 回答（本批给它加了「· N 颗」）。 */
+  .topbar-slot--title {
+    display: none;
+  }
+
+  /* 第 3 批（DOM 门禁 B8a2 实测补的一个 12px）：
+     手机档的 `grid-template-areas` 只有 `'params document actions'`，**没有 `trailing` 区域**；
+     而 `.topbar-slot--trailing` 仍然是 `display:flex` 的**空槽**（唯一子元素 `.topbar-right` 在这一档是
+     `display:none`，所以它是 0×0）⇒ 它被自动放进**隐式行**，`grid-template-rows` 实测 `54px 0px 0px`，
+     两段 `row-gap:6px` 合计**白吃 12px 高度**（顶栏 79px，隐藏该槽后 67px）。
+     视觉上仍是 1 行、所以肉眼看不出，但本批手机档的全部意义就是"把高度还给画布" ⇒ 必须收掉。
+     ⚠️ 只在手机档隐藏：桌面/平板档这个槽装的是 GitHub + 语言切换，要显示。 */
+  .topbar-slot--trailing {
+    display: none;
+  }
+
+  /* 第 3 批（D11）：**参数只留预设下拉** —— 两个数字框与「应用」按钮都在手机上隐藏。
+     省下的宽度给了撤销/重做（第 2 行）与导出组，顶栏因此能收成 1 行。
+     ⚠️ 隐藏「应用」按钮后，预设下拉必须"选了就生效"，否则它是个**死控件** ——
+        这条行为由 `App.tsx` 的 `applyPreset()` 负责（`isPhoneViewport` 时立即 `resizeCanvasTo`）。 */
+  .topbar-dimension-group,
+  .canvas-apply-button {
+    display: none;
+  }
+
+  .canvas-preset-select {
+    max-width: none;
+  }
+
+  .print-export-button svg {
+    display: none; /* 图标是装饰，去掉后「导出图纸」按钮窄 22px */
+  }
+
+  .topbar-right {
+    display: none;
+  }
+
+  /* 导出设置浮层原本是 topbar 内的 absolute 浮层（top:100%+8 / width 292），
+     在手机的横向滚动条里会被裁掉 ⇒ 改成底部浮层（平板/桌面仍是原来的贴按钮浮层） */
+  .print-export-menu::after {
+    display: none;
+  }
+
+  .print-export-popover {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    top: auto;
+    width: auto;
+    max-height: 76dvh;
+    overflow: auto;
+    overscroll-behavior: contain;
+    z-index: 90;
+  }
+
+  /* ---- W2.3 画布占主视区 ----
+     `@media (max-width:980px)` 那段的 `.workspace{min-height:420px}` 会顶破手机单列，必须清掉 */
+  .workspace {
+    grid-column: 1;
+    grid-row: 2;
+    min-height: 0;
+  }
+
+  /* ---- W2.4 左右面板 → 底部浮层（bottom sheet）----
+     第 3 批：三个 `bottom` 全部改成**让开底部工具条**（`--rail-height` 由 `App.tsx` 实测写入，
+     见那里的注释；`101px` 只是首帧兜底值）。
+     · 抽屉浮层 bottom = 工具条高 ⇒ 工具条露在浮层下面，**抽屉开着也能点另外两个面板条目**；
+     · 遮罩 bottom 同样抬起来 ⇒ 工具条不被遮罩盖住（否则点下去只会关抽屉）；
+     · `left: 0` + `right: 0` 在这里只声明手机自己的**满宽**盒子（手机的工具条是底部横条、
+       不是左侧竖列）。⚠️ B11 之后平板档的 `.left-panel` 已经没有 `left: 84px` 了
+       （两个抽屉都贴右边缘），所以这两条不再承担"覆盖平板档定位"的职责。 */
+  .left-panel,
+  .right-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: var(--rail-height, 101px);
+    top: auto;
+    z-index: 41;
+    width: auto;
+    max-height: min(78dvh, 620px);
+    padding: 16px 12px calc(12px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px));
+    border: 0;
+    border-top: 1px solid var(--line-strong);
+    border-radius: 16px 16px 0 0;
+    background: var(--panel);
+    box-shadow: 0 -16px 40px rgba(17, 24, 39, 0.28);
+    overflow: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    /* B11（用户第 1 条）：手机档这两个浮层的**盒子一字不动**（贴底、让开底部工具条、
+       满宽 `left:0; right:0`、`max-height: min(78dvh, 620px)`），只把**滑入轴**从 Y 换成 X、
+       改成从**右缘**进 —— 这样「素材 / 参考 / 颜色」三个条目在手机上也与 iPad / 窄窗同向。
+       ⚠️ 打开态因此**逐像素不变**：`translateX(0)` 与原来的 `translateY(0)` 都是恒等变换，
+         `left/right/top/bottom/width/max-height` 全部保留 ⇒ B8 / B9b / B10 在手机档量到的
+         卡片高度、抽屉滚动数字、卡片宽度都不受本批影响。
+       ⚠️ 收起态从"下移 `100% + rail 高`"改成"右移 104%"：X 轴上没有 `--rail-height` 那笔偏移
+         要补（那条偏移是第 3 批为竖轴写的，见 git 历史）；104% 与 `.right-panel` 同一口径
+         ⇒ 收起后整个落在视口右外侧。
+       （第 3 批那段 🔴 说明已随本批的轴向改动删除：它解释的是 `translateY` 为何要带 rail 位移。） */
+    transform: translateX(104%);
+    transition: transform 0.22s ease;
+  }
+
+  /* 第 3 批：原来这里有一条 `.panel-scrim { left: 0; bottom: var(--rail-height) }` ——
+     **已删除**。遮罩现在是整屏（`inset: 0`，见平板段），工具条靠 `z-index: 42` 浮在它之上
+     （平板段那条 `.tool-rail { z-index: 42 }` 在手机上同样生效）。
+     让遮罩"让开工具条"是做得到的，但那会在工具条旁边留下一条没被压暗的竖条 / 横条。 */
+
+  /* ==========================================================================
+     B8（用户第 2 条）：**手机档**「参考」浮层也要按抽屉空间排版
+     --------------------------------------------------------------------------
+     病根（实测，改前）：手机档的抽屉是 `top:auto; bottom:rail-height; max-height:min(78dvh,620px)`
+     的 **content-sized bottom sheet** ⇒ `flex-grow` 拉不动它（父高由内容决定，没有富余可分配），
+     所以上面 W1.3 段那条 `.reference-card{flex:1 1 auto}` 在手机上**够不着**：
+     实测卡片恒 225px、浮层只有 314px（同一抽屉的「素材」是 620px）。
+     要"内容需要时用满 `max-height`"，只能给卡片一个**显式高度**（不是补丁：这就是 bottom sheet
+     的定高方式，与右抽屉 `.palette-grid{flex-basis:clamp(250px,36dvh,398px)}` 同一手法）。
+
+     高度口径：抽屉内容盒上限 = 浮层高上限 620 − 上下 padding 28 = **592**。
+       · 电话竖屏（844 高）：`78dvh = 658.3` ⇒ min(592, 658.3) = **592** ⇒ 浮层 620（用满上限）。
+       · 矮视口：`78dvh − 28` 随视口缩 ⇒ 卡片跟着缩，浮层永不超 `max-height`（不会把工具条顶掉）。
+       · 触屏横屏（矮而宽）：`max(360px, …)` 保证 6 个控件仍然排得下 —— 排不下时由抽屉自己滚
+         （它是 `overflow:auto`），控件依旧可达，不会出现"被裁掉点不到"。
+     ⚠️ 这里写的必须是 **`min-height` 而不是 `height`**：手机档面板是 `flex:0 1 auto` 的定高
+        bottom sheet，卡片的 `height` 只是 flex-basis，`flex-shrink:1` 会把它压回"面板内容盒
+        − gap − 关闭行"。实测（`_probe_B8.cjs` 的 `cardComputed`，390×844）：
+        写 `height:592px` ⇒ 卡片 531；写 `min-height` ⇒ 卡片 592（= 撑满可用高，空白归 0）。
+     ========================================================================== */
+  .left-panel:has(.reference-card) .reference-card {
+    min-height: max(360px, min(592px, calc(78dvh - 28px)));
+  }
+
+  /* ---- Bug C 根修（手机档的版式重分配，2026-09-21）----
+     桌面/iPad 靠上面 `.usage-section` 那两条（列表真实下限 + 容器自己滚）就够了；
+     **手机不够**：抽屉的可用高上限只有 400px，而「用量」段里列表之前还有 5 个固定块
+     合计 405.8px —— 就算给列表 162px 的下限，滚到列表也只能露出几像素，
+     而且会变成"抽屉滚 + 段滚 + 列表滚"三层嵌套滚动条。
+     ⚠️ B6（2026-09-21）后固定块从 5 个减到 4 个（删了统计图层卡）⇒ 这条版式重分配
+        仍然保留（4 块的自然高仍可能超过 400px 上限，只是余量变多）。
+     所以手机档把这一段的**两层定高结构整个去掉**：段不再 `flex:1`、也不再自己裁/滚，
+     改由**抽屉自己**（它本来就是 `overflow:auto` 的 bottom sheet）当唯一的滚动容器。
+     结果：列表拿到 11 行的**自然高**（不再被压扁、也没有内层滚动条）。
+     ⚠️ **实测口径（独立验证子代理 `7e02e602` 复核过，勿写成"一打开就能看到前几行"）**：
+     手机 390×844 下 `.usage-list` clientHeight **0 → 625**、`[data-recolor-editor]` **0 → 834**，
+     `.right-panel` 由"滚不动（619/619）"变成 `auto(619/1249)`；但**抽屉打开时 scrollTop=0**，
+     列表顶边 y=722.6 而抽屉可视底边 742 ⇒ **完整可见行数仍是 0，第 1 行只露出 19.4px**；
+     要**下滑 601px** 才能看到全部 10 行。⇒ 本批真正修好的是「**从 0 高、完全不可达 → 可达**」，
+     "打开抽屉立刻看到前几行"**不是**本批达到的效果（若要做，需把列表在手机档 `order` 前移，
+     或再压固定块高度 —— 属版式决策，未做）。 */
+  .right-panel:has(.usage-section) {
+    overflow: auto;
+  }
+
+  .usage-section {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
+  .usage-section > .usage-list,
+  .usage-section > .recolor-editor-body {
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+
+  .left-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .app-shell.is-left-open .left-panel,
+  .app-shell.is-right-open .right-panel {
+    transform: translateX(0);
+  }
+
+  /* 浮层顶部的小把手：纯装饰（用 ::before 画，不加 DOM） */
+  .left-panel::before,
+  .right-panel::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 6px;
+    width: 42px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(17, 24, 39, 0.18);
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+
+  /* ---- W2.5 工具条 → 底部横条 ----
+     第 3 批：条目从 10 涨到 13（+3 面板条目），并把条目收到 44px / 间距 3px。
+     360px 宽下 7 个/行 × 44 + 6 × 3 = 326px（可用 348px）⇒ 仍是 **2 行**，高度 101px。
+     （旧值 48px/gap 4 时 6 个/行 ⇒ 13 条会变成 3 行、多顶掉 47px 画布。） */
+  .tool-rail {
+    grid-column: 1;
+    grid-row: 3;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-content: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 5px 6px calc(5px + env(safe-area-inset-bottom, 0px)) calc(6px + env(safe-area-inset-left, 0px));
+    border-right: 0;
+    border-top: 1px solid var(--line-strong);
+  }
+
+  .tool-button {
+    width: auto;
+    /* 第 3 批 D8/B3：48 → 44。360px 宽（最窄的常见手机）下 7 个/行 × 44 + 6 间隙 × 3 = 326px，
+       落在 348px 的可用宽里 ⇒ **13 条仍是 2 行**（第 3 批新增了 3 个面板条目，第 3 行会顶掉画布）。
+       44 也是触屏最小目标，不再往下收。 */
+    min-width: 44px;
+    height: 44px;
+    padding: 3px 5px;
+    gap: 1px;
+  }
+
+  /* 底部横条是 flex，分隔线在这里没有意义（横排里它要么变成一根竖线、要么被换行甩到下一行） */
+  .tool-rail-divider {
+    display: none;
+  }
+
+  /* 竖排工具条左侧那条选中指示在底部横条里没有意义 */
+  .tool-button::before {
+    display: none;
+  }
+
+  .tool-button span {
+    font-size: var(--font-size-caption);
+    line-height: 1.1;
+  }
+
+  /* 工具选项浮层：**第 6 批不再改定位**。
+     原来（第 2/3 批）这里写 `position: fixed; left: 8px; right: 8px;
+     bottom: calc(var(--rail-height) + 8px)` —— 那是为了"逃出被 `.tool-rail` 裁掉"而打的补丁。
+     现在浮层住在 `.tool-options-layer` 里（工具条的兄弟、只占顶栏与工具条之间那一行），
+     位置统一由 `App.tsx` 的 `placeToolOptions()` 按触发按钮 rect 算：
+     手机档底部工具条上的按钮一律"右边放不下 + 下边放不下" ⇒ 被夹到
+     `left = 覆盖层左边界 + 8`、`top = 覆盖层下边界 − 8 − 高`，
+     与旧的 `left:8 / bottom: rail-height+8` **几乎等价，但不是逐像素**：唯一例外是
+     `.tool-options.recolor-options` —— 旧手机档对它单独用的是 `bottom: calc(--rail-height + 12px)`
+     （其余 7 个才 +8px），新实现**统一成 −8px** ⇒ 换色浮层底边 **730.0 → 734.3，下移约 4px**
+     （独立验证子代理 `7e02e602` 实测；其余 7 个底边两构建一致）。这是**有意的统一**
+     （一条规则取代一处 per-tool 例外，符合"不打补丁"），4px 的视觉差已记录。
+     门禁 `_verify_P0_tooloptions.cjs` 在 390×844 上逐项断言 rect 与自命中。
+     ⚠️ 这里**必须一条 `top/bottom/left/right` 都不写**：JS 写的是内联 `left/top`，
+        再叠加 CSS 的 `bottom` 会把浮层拉成"从 left 到 right 的一条"。
+     保留的两条只与尺寸有关：整行宽 + 不超视口高。 */
+  .tool-options {
+    width: calc(100% - 16px);
+    max-height: 72dvh;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* ---- W2.6 画布上的浮层控件 ---- */
+  .zoom-controls {
+    right: 8px;
+    bottom: 8px;
+  }
+
+  .board-chip {
+    left: 8px;
+    top: 8px;
+  }
+
+  /* B9：手机档圆点也收到 8px 内缩（与 `.board-chip` 同一个口径）—— 390 宽的画布上
+     14px 会显得浮在中间。
+     ⚠️ 这里原来还有一条 `left: auto`，是给"抽屉打开时圆点左移"那条规则配对的
+        （那条已按用户裁决整块删除，见上面 `.palette-dot` 基础块后面的说明）
+        ⇒ 现在 `left` 没有任何规则会写它，留着只会让人以为还有一条定位在生效。 */
+  .palette-dot {
+    right: 8px;
+    top: 8px;
+  }
+
+  /* B7：画布左下角的状态小字在手机上**抬到缩放控件之上**。
+     原因（实测）：390 宽的画布上 `.zoom-controls` 是 204×54、`right:8 bottom:8`
+     ⇒ 与它同处底部一条水平带、又要留 8px 边距的话，左边只剩 162px；
+     换品牌那种回执（40+ 字）在这个宽度里会被挤成一列窄字。
+     抬起来之后 `max-width` 可以到 `100% - 16px`，与 `.zoom-controls` 的 rect **零重叠**
+     （门禁里三档都断言 rect 交集为空）。
+     ⚠️ `54px` 是手机档 `.zoom-controls` 的**实测高**（44px 触控目标 + 4px padding×2 + 2px 边框），
+        与它上面那条 `right/bottom: 8px` 是同源的本地常量；改缩放控件尺寸时这条要跟着改。 */
+  .canvas-status {
+    left: 8px;
+    bottom: calc(8px + 54px + 8px);
+    max-width: calc(100% - 16px);
+  }
+
+  /* W1：`.panel-toggle-left/right{left|right:8px; bottom:8px}` 两条已删除 ——
+     开关不再浮在画布右下角/左下角（那是"压内容"的根源），已经搬进顶栏 leading 槽位。 */
+
+  /* 触屏帮助浮层在手机上没地方「贴着元素右侧」放 ⇒ 改成屏幕中部的整行提示。
+     `showFloatingHelp` 写的是内联 left/top，所以这里必须 !important 才压得住。 */
+  .floating-help-tooltip {
+    left: 12px !important;
+    right: 12px !important;
+    top: 50% !important;
+    bottom: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    transform: translateY(-50%) !important;
+    z-index: 1300;
+  }
+
+  .floating-help-tooltip::before {
+    display: none;
+  }
+
+  /* 错误浮条在手机上收窄到几乎全宽，别横向溢出 */
+  .error-banner {
+    top: 8px;
+    width: calc(100vw - 16px);
+  }
+}
+
+/* ============================================================================
+   W3（R3 命中区）第 3 阶段：补掉用户裁决里剩下的三项
+     【10】参考卡「重置位置」按钮文字溢出（粗指针档溢出内容盒 20px、细指针档标签溢出 6px）
+     【6】 参数卡 / AI 卡「背景」下拉在粗指针下过大（44px 高，比同排 22px 的滑条高一倍）
+     【7】 AI 卡「重新识别」按钮在粗指针下 44px 高、配 11px 字号比例失常
+   ----------------------------------------------------------------------------
+   共同手法（R3 / 用户决策⑭）：**只压"可见盒"，命中区另行保证，行高一律不动**。
+   ⚠️ `<select>` 是 replaced 元素，**不能**用 `::before/::after` ⇒ 项② 的命中区靠它外面的
+      `<label>`（`.param-row` / `.ai-redraw-bg-field`，都是**隐式关联**、无 `for`）转发：
+      select 压到 32px 后，label 上下的空白带（各 6px）仍把点击落到 select 上
+      （实测：上/下各 4px 处真触摸都聚焦到该 select）。
+   ⚠️ 字号一律不动（`font-size:max(16px,1em)` 是防 iOS 聚焦整页放大的，见上面的粗指针块）。
+   ⚠️ 选择器都限定到这几个具体控件，**不碰通用 `select` / `button` / `font-size` 规则**。
+   ========================================================================== */
+@media (pointer: coarse) {
+  /* 【10】(a) 这一行的第 3 列原本被上面的粗指针块
+     `.left-panel .param-row, .left-panel .ref-row{grid-template-columns:58px minmax(0,1fr) 44px}`
+     写死成 44px，而「重置位置」的文字要 48px + 14px 内边距 ⇒ 文字溢出内容盒 20px、整行溢出 12px。
+     改成 `auto`（= 该按钮 max-content 64px）：溢出归零，中列 167→147（两个切换按钮 78.5→~71，
+     仍 ≥44px），行高 32 不变。 */
+  .left-panel .ref-row-actions {
+    grid-template-columns: 58px minmax(0, 1fr) auto;
+  }
+
+  /* 【6】两个「背景」select：可见高 44 → 32（= 它们自己的细指针高度）。所在行/字段的 44px
+     由 `.left-panel .param-row{min-height:44px}` 与 AI 卡字段自身撑住 ⇒ 行高不变。
+     命中区由外层 label 的 44px 空白带提供（见本块顶部说明）。
+     AI 卡那处会让字段高 66.19 → 64.19（旁边 key 字段本来就是 64.19、顺手消掉一处 2px 不齐）——
+     这是本阶段**唯一**的布局差异，已获批、逐项列在报告里。 */
+  .app-shell .params-card .param-row:last-child select,
+  .app-shell .ai-card .ai-redraw-bg-field select {
+    min-height: 32px !important;
+  }
+
+  /* 【7】「重新识别」：可见高 44 → 32（与上面两个 select 统一，避免同一张卡出现第三种高度）；
+     行高 44 不变（同排 `a.ai-detect-link` 的通用 `a[href]{min-height:44px}` 撑着它）；
+     命中区用不可见 `::after` 补回 44（= 32 + 6 + 6），正好落在这一行 44px 之内、不与邻居相交。 */
+  .app-shell button.ai-detect-retry {
+    position: relative;
+    min-height: 32px !important;
+  }
+
+  .app-shell button.ai-detect-retry::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -6px;
+    bottom: -6px;
+  }
+}
+
+@media (pointer: fine) {
+  /* 【10】(b) 细指针档这一行的第 1 列是固定 42px，而标签「显示位置」的文字/Range 行盒要 48px
+     （max-content 56px）⇒ 标签自己溢出 6px。放宽到 `minmax(42px, 48px)`：刚好容下文字，
+     中列 139→133（切换按钮 64.5→~61.5，仍 ≥24px），行高 32 与卡高都不变。
+     ⚠️ 不用 `auto` / `max-content`（=56px）：那会把中列再压 14px，两个切换按钮会被压到 ~54px。 */
+  .left-panel .ref-row-actions {
+    grid-template-columns: minmax(42px, 48px) minmax(0, 1fr) auto;
+  }
+
+  /* 【7】细指针下「重新识别」只有 18.5px（竖版 22px）高，低于本批 ⑤ 定的「细指针 ≥24×24」⇒
+     用不可见 `::after` 补到 24（18.5 + 3.5 + 3.5 = 25.5；竖版 22 + 3.5 + 3.5 = 29）。
+     零布局变化；最近邻在 28.94px 以外 ⇒ 不相交。 */
+  .app-shell button.ai-detect-retry {
+    position: relative;
+  }
+
+  .app-shell button.ai-detect-retry::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -3.5px;
+    bottom: -3.5px;
+  }
+}
+
+

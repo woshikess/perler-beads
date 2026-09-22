@@ -1,8 +1,48 @@
+// W0.3：601 亮度的定义收敛到 ./luminance（原先本文件与 imageToBeads.ts 各有一份逐字相同的副本）
+import { luminance601 as luminance } from './luminance.js';
 import { getColor, mappedCode } from './palette.js';
 const PRINT_EXPORT_PPI = 330;
 const CSS_PIXEL_PPI = 96;
 const MAX_EXPORT_CANVAS_SIDE = 12000;
 const PRINT_EXPORT_SCALE = PRINT_EXPORT_PPI / CSS_PIXEL_PPI;
+/* ── D5 用量表排版参数 ─────────────────────────────────────────────────────
+   表格画在现有「色块图例」下面、左对齐到网格左边；列与列之间是一条空白带。 */
+const USAGE_TABLE_MAX_ROWS_PER_COLUMN = 12;
+const USAGE_TABLE_MIN_COLUMN_WIDTH = 104;
+const USAGE_TABLE_MAX_COLUMN_WIDTH = 220;
+const USAGE_TABLE_COLUMN_GAP = 14;
+const USAGE_TABLE_HEADER_HEIGHT = 22;
+const USAGE_TABLE_ROW_HEIGHT = 20;
+const USAGE_TABLE_PADDING = 8;
+/** 色数达到这个数就必须分多栏（派工书：20–24 色时分多栏） */
+const USAGE_TABLE_MULTI_COLUMN_FROM = 20;
+/**
+ * 纯函数：算出用量表分几栏、每栏几行、占多宽多高。
+ * 单独导出是为了能**只测排版**（不跑 canvas、不依赖浏览器与 DOM）。
+ *   - 单栏最多 12 行，超了才分栏；
+ *   - 色数 ≥ 20 至少两栏；
+ *   - 每栏不小于 104px（色块 + 色号 + 数量），所以栏数还要受可用宽度限制。
+ */
+export function planUsageTable(colorCount, availableWidth) {
+    const count = Math.max(0, Math.floor(colorCount));
+    const usable = Math.max(0, availableWidth);
+    const minColumns = count >= USAGE_TABLE_MULTI_COLUMN_FROM ? 2 : 1;
+    const columnsByRows = Math.max(minColumns, Math.ceil(count / USAGE_TABLE_MAX_ROWS_PER_COLUMN));
+    const columnsByWidth = Math.max(1, Math.floor((usable + USAGE_TABLE_COLUMN_GAP) / (USAGE_TABLE_MIN_COLUMN_WIDTH + USAGE_TABLE_COLUMN_GAP)));
+    const columns = Math.max(1, Math.min(columnsByRows, columnsByWidth));
+    const rowsPerColumn = count === 0 ? 0 : Math.ceil(count / columns);
+    const columnWidth = Math.min(USAGE_TABLE_MAX_COLUMN_WIDTH, Math.max(0, (usable - USAGE_TABLE_COLUMN_GAP * (columns - 1)) / columns));
+    return {
+        columns,
+        rowsPerColumn,
+        columnWidth,
+        columnGap: USAGE_TABLE_COLUMN_GAP,
+        headerHeight: USAGE_TABLE_HEADER_HEIGHT,
+        rowHeight: USAGE_TABLE_ROW_HEIGHT,
+        tableWidth: columns * columnWidth + USAGE_TABLE_COLUMN_GAP * (columns - 1),
+        tableHeight: USAGE_TABLE_PADDING * 2 + USAGE_TABLE_HEADER_HEIGHT + rowsPerColumn * USAGE_TABLE_ROW_HEIGHT,
+    };
+}
 export function downloadProjectJson(project) {
     downloadBlob(`${safeName(project.name || '\u62fc\u8c46\u7f16\u8f91\u8bb0\u5f55')}-\u7f16\u8f91\u8bb0\u5f55_perler.json`, JSON.stringify(project, null, 2), 'application/json');
 }
@@ -13,9 +53,11 @@ export function downloadUsageWorkbook(project) {
             name: '\u603b\u6570',
             rows: usageSheetRows(project, '\u603b\u6570', summarizeLayerUsage(project, usageLayers)),
         },
+        // B12（KI-041）：sheet 名不再出现「图层」。单层工程（界面唯一可达形态）⇒ ["总数","用量"]；
+        // 多层草稿/导入 JSON ⇒ ["总数","用量 1","用量 2"]。**只改名，表结构与统计口径一字未动。**
         ...usageLayers.map((layer, index) => ({
-            name: usageLayerSheetName(layer, index),
-            rows: usageSheetRows(project, usageLayerSheetName(layer, index), summarizeLayerUsage(project, [layer])),
+            name: usageLayerSheetName(layer, index, usageLayers.length),
+            rows: usageSheetRows(project, usageLayerSheetName(layer, index, usageLayers.length), summarizeLayerUsage(project, [layer])),
         })),
     ];
     const workbook = createXlsxWorkbook(sheets);
@@ -42,28 +84,65 @@ export function downloadPrintPdf(project, options = { showColorCodes: true, show
         downloadBlob(`${printFileName(layerOptions)}.pdf`, pdf, 'application/pdf');
     });
 }
-function renderPrintCanvas(project, options) {
-    const printProject = options.exportBounds === 'canvas' ? project : cropProjectToPattern(project);
+/**
+ * 一张打印图纸的全部几何，**只算不画**。
+ * renderPrintCanvas 与只读诊断 diagnosePrintLayout 共用这一份算式，避免两处各算一遍漂移。
+ */
+function measurePrintLayout(printProject, options) {
     const usage = summarizeProjectUsage(printProject);
     const cellSize = printProject.width > 100 || printProject.height > 100 ? 18 : printProject.width > 72 || printProject.height > 72 ? 20 : 24;
     const margin = 34;
     const headerHeight = 54;
     const labelBand = 24;
-    const gridWidth = printProject.width * cellSize;
-    const gridHeight = printProject.height * cellSize;
     const chipWidth = 92;
     const chipHeight = 30;
     const chipGap = 8;
+    const gridWidth = printProject.width * cellSize;
+    const gridHeight = printProject.height * cellSize;
     const contentWidth = labelBand + gridWidth + labelBand;
     const chipsPerRow = Math.max(1, Math.floor(contentWidth / (chipWidth + chipGap)));
     const legendRows = Math.max(1, Math.ceil(usage.length / chipsPerRow));
     const legendHeight = legendRows * (chipHeight + chipGap) + 6;
+    // D5：只有勾了「附用量表」才算这块高度（默认不开 ⇒ 下面这一行恒为 0，版式与改动前一致）
+    const usageTable = options.includeUsageTable ? planUsageTable(usage.length, contentWidth) : null;
+    const usageTableHeight = usageTable ? usageTable.tableHeight : 0;
     const width = margin * 2 + contentWidth;
-    const height = margin + headerHeight + labelBand + gridHeight + labelBand + 24 + legendHeight + margin;
+    const height = margin + headerHeight + labelBand + gridHeight + labelBand + 24 + legendHeight + usageTableHeight + margin;
     const scale = resolvePrintScale(width, height);
+    const gridTop = margin + headerHeight + labelBand;
+    const legendTop = gridTop + gridHeight + labelBand + 24;
+    return {
+        usage, cellSize, margin, headerHeight, labelBand, chipWidth, chipHeight, chipGap,
+        gridWidth, gridHeight, contentWidth, width, height, scale,
+        canvasWidth: Math.ceil(width * scale),
+        canvasHeight: Math.ceil(height * scale),
+        gridTop, legendHeight, legendTop,
+        usageTableTop: legendTop + legendHeight,
+        usageTable,
+    };
+}
+/**
+ * 只读诊断（W3.2 验证脚本用）：这张图纸在给定选项下的排版几何 + 用量表计划。
+ * 与绘制共用 measurePrintLayout；**不参与绘制、不影响任何产物字节**。
+ */
+export function diagnosePrintLayout(project, options) {
+    const printProject = options.exportBounds === 'canvas' ? project : cropProjectToPattern(project);
+    const layout = measurePrintLayout(printProject, options);
+    return {
+        ...layout,
+        patternWidth: printProject.width,
+        patternHeight: printProject.height,
+        colorCount: layout.usage.length,
+        usageTableTopPx: layout.usageTableTop * layout.scale,
+    };
+}
+function renderPrintCanvas(project, options) {
+    const printProject = options.exportBounds === 'canvas' ? project : cropProjectToPattern(project);
+    const layout = measurePrintLayout(printProject, options);
+    const { usage, cellSize, margin, labelBand, chipWidth, chipHeight, chipGap, gridWidth, gridHeight, contentWidth, width, height, scale, canvasWidth, canvasHeight, gridTop, legendTop, usageTableTop, usageTable, } = layout;
     const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(width * scale);
-    canvas.height = Math.ceil(height * scale);
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
     const context = canvas.getContext('2d');
     if (!context)
         throw new Error('Canvas is not available.');
@@ -71,7 +150,6 @@ function renderPrintCanvas(project, options) {
     context.fillStyle = '#ffffff';
     context.fillRect(0, 0, width, height);
     const gridLeft = margin + labelBand;
-    const gridTop = margin + headerHeight + labelBand;
     const displayName = printDisplayName(options);
     const title = `${displayName} [${printProject.width}x${printProject.height}/${printProject.activeBrand}/${usage.length}\u8272/\u5171${usage.reduce((sum, row) => sum + row.count, 0)}\u9897]`;
     context.fillStyle = '#111827';
@@ -112,7 +190,10 @@ function renderPrintCanvas(project, options) {
         drawPrintGuideLines(context, printProject, gridLeft, gridTop, cellSize);
     }
     drawOuterGridFrame(context, gridLeft, gridTop, gridWidth, gridHeight);
-    drawUsageLegend(context, usage, margin + labelBand, gridTop + gridHeight + labelBand + 24, contentWidth, chipWidth, chipHeight, chipGap);
+    drawUsageLegend(context, usage, margin + labelBand, legendTop, contentWidth, chipWidth, chipHeight, chipGap);
+    if (usageTable) {
+        drawUsageTable(context, usage, margin + labelBand, usageTableTop, usageTable);
+    }
     return canvas;
 }
 function resolvePrintScale(width, height) {
@@ -225,6 +306,58 @@ function drawUsageLegend(context, usage, left, top, width, chipWidth, chipHeight
     });
     context.restore();
 }
+/**
+ * D5：把「色号 + 用量」画成一张表，接在色块图例下面。
+ * 每栏是一竖列：表头（色号 / 用量）+ 若干行；行内是「色块 + 色号 + 数量」。
+ * 栏的几何完全来自 planUsageTable（纯函数、可单测），这里只负责画。
+ */
+function drawUsageTable(context, usage, left, top, layout) {
+    context.save();
+    const { columns, rowsPerColumn, columnWidth, columnGap, headerHeight, rowHeight } = layout;
+    context.textBaseline = 'middle';
+    for (let column = 0; column < columns; column += 1) {
+        const columnLeft = left + column * (columnWidth + columnGap);
+        // 表头
+        context.fillStyle = '#f1f5f9';
+        context.strokeStyle = '#94a3b8';
+        context.lineWidth = 1;
+        roundRect(context, columnLeft, top, columnWidth, headerHeight, 4);
+        context.fill();
+        context.stroke();
+        context.fillStyle = '#475569';
+        context.font = '700 12px Arial, "Microsoft YaHei", sans-serif';
+        context.textAlign = 'left';
+        context.fillText('色号', columnLeft + 8, top + headerHeight / 2 + 0.5);
+        context.textAlign = 'right';
+        context.fillText('用量', columnLeft + columnWidth - 8, top + headerHeight / 2 + 0.5);
+        // 数据行
+        for (let rowIndex = 0; rowIndex < rowsPerColumn; rowIndex += 1) {
+            const index = column * rowsPerColumn + rowIndex;
+            if (index >= usage.length)
+                break;
+            const row = usage[index];
+            const rowTop = top + headerHeight + rowIndex * rowHeight;
+            context.fillStyle = '#ffffff';
+            context.strokeStyle = '#cbd5e1';
+            context.lineWidth = 1;
+            roundRect(context, columnLeft, rowTop, columnWidth, rowHeight, 3);
+            context.fill();
+            context.stroke();
+            context.fillStyle = row.color.hex;
+            roundRect(context, columnLeft + 8, rowTop + (rowHeight - 12) / 2, 12, 12, 3);
+            context.fill();
+            context.strokeStyle = 'rgba(17, 24, 39, 0.22)';
+            context.stroke();
+            context.fillStyle = '#111827';
+            context.font = '700 12px Arial, sans-serif';
+            context.textAlign = 'left';
+            context.fillText(row.color.primaryCode, columnLeft + 26, rowTop + rowHeight / 2 + 0.5);
+            context.textAlign = 'right';
+            context.fillText(String(row.count), columnLeft + columnWidth - 8, rowTop + rowHeight / 2 + 0.5);
+        }
+    }
+    context.restore();
+}
 function summarizeProjectUsage(project) {
     const counts = new Map();
     project.cells.forEach((colorId) => {
@@ -265,8 +398,16 @@ function printLayerProjects(project, options) {
         };
     });
 }
-function printLayerName(layer, index, layerLabelPrefix = '图层') {
-    const fallback = layerLabelPrefix === 'Layer' ? `Layer ${index + 1}` : `${layerLabelPrefix}${index + 1}`;
+/**
+ * B12（KI-041）：**多层草稿 / 导入 JSON** 的打印图纸层名前缀（单层工程根本走不到这里 ——
+ * `printLayerProjects()` 在 `nonEmptyLayers.length <= 1` 时早返回，`layerName` 恒为 undefined）。
+ *   · 中文前缀「第」 ⇒ 「第1张」；英文前缀 `'Pattern'` ⇒ `Pattern 1`（都不含「图层」/`Layer`）。
+ * 选「第 N 张」而不是「不加前缀」：多层会导出多个文件，不加前缀时文件名完全相同 ⇒
+ * 浏览器只能自己加 `(1)`/`(2)`，用户在磁盘上分不清哪张是第几层；保留"名字里带序号"这个
+ * 原有语义、只换词，风险最小。自定义层名仍然拼在后面（`第1张-自定义名`）。
+ */
+function printLayerName(layer, index, layerLabelPrefix = '第') {
+    const fallback = layerLabelPrefix === 'Pattern' ? `Pattern ${index + 1}` : `${layerLabelPrefix}${index + 1}张`;
     const custom = layer.customName && layer.name.trim() ? layer.name.trim() : '';
     return custom ? `${fallback}-${custom}` : fallback;
 }
@@ -312,9 +453,18 @@ function summarizeLayerUsage(project, layers) {
     })
         .sort((a, b) => b.count - a.count || a.color.primaryCode.localeCompare(b.color.primaryCode));
 }
-function usageLayerSheetName(layer, index) {
-    const name = layer.customName && layer.name.trim() ? layer.name.trim() : `\u56fe\u5c42 ${index + 1}`;
-    return name;
+/**
+ * B12（KI-041）：用量 sheet 名。
+ *   · 有自定义层名 ⇒ 原样用（行为不变）；
+ *   · 单层（`total <= 1`，= 界面唯一可达形态）⇒ 「用量」；
+ *   · 多层草稿/导入 JSON ⇒ 「用量 N」（N 从 1 起）。
+ * 改动前这里是 `图层 ${index + 1}`。**只改了默认名，表结构 / 行 / 统计口径都没碰。**
+ */
+function usageLayerSheetName(layer, index, total = 1) {
+    const custom = layer.customName && layer.name.trim() ? layer.name.trim() : '';
+    if (custom)
+        return custom;
+    return total <= 1 ? '\u7528\u91cf' : `\u7528\u91cf ${index + 1}`;
 }
 function createXlsxWorkbook(sheets) {
     const safeSheets = uniqueSheetNames(sheets.map((sheet) => sheet.name));
@@ -522,9 +672,8 @@ function roundRect(context, x, y, width, height, radius) {
     context.lineTo(x, y + r);
     context.quadraticCurveTo(x, y, x + r, y);
 }
-function luminance(rgb) {
-    return 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2];
-}
+// W0.3：`function luminance` 已搬到 ./luminance（导出名 luminance601）。
+// 本文件里的调用点一个字未改，靠上面的 `luminance601 as luminance` 别名接住。
 function csvCell(value) {
     return `"${String(value ?? '').replace(/"/g, '""')}"`;
 }
