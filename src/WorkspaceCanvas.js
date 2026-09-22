@@ -1106,9 +1106,10 @@ function drawPattern(context, project, cellSize, zoom, pan, highlightedColorId, 
                 context.fillStyle = topColor.hex;
                 context.fillRect(left, top, cellSize, cellSize);
             }
-            if (stack.length > 1 && project.settings.showLayerOverlap) {
-                drawStackOverlay(context, stack, left, top, cellSize);
-            }
+            // B33：这里原来还有一段「重叠格子」叠加（`drawStackOverlay`）——
+            //      只在 `stack.length > 1`（同一格有 ≥2 个可见图层都放了豆）时才画徽章/色带。
+            //      B6 之后正常路径上恒为 1 层 ⇒ 永远不触发；用户 2026-09-22 决定连同视图开关一起去掉。
+            //      （多图层的**渲染**本身不变：上面的 `drawBeadStack` 仍按图层栈画。数据模型字段保留。）
             if (highlightedColorId && topColorId !== highlightedColorId) {
                 context.fillStyle = 'rgba(255, 255, 255, 0.72)';
                 context.fillRect(left, top, cellSize, cellSize);
@@ -1534,48 +1535,6 @@ function drawBeadStack(context, stack, left, top, cellSize) {
         context.stroke();
     }
     context.globalAlpha = 1;
-}
-function drawStackOverlay(context, stack, left, top, cellSize) {
-    const count = stack.length;
-    const badgeRadius = Math.max(3.5, Math.min(5.5, cellSize * 0.25));
-    const badgeX = left + badgeRadius + 1;
-    const badgeY = top + badgeRadius + 1;
-    const stripColors = stack.slice(-4);
-    const stripWidth = Math.max(2, Math.min(3.2, cellSize * 0.15));
-    const stripHeight = cellSize - 6;
-    const stripLeft = left + cellSize - stripWidth - 2;
-    const stripTop = top + 3;
-    const segmentHeight = stripHeight / stripColors.length;
-    context.save();
-    context.beginPath();
-    context.fillStyle = 'rgba(17, 24, 39, 0.72)';
-    context.arc(badgeX, badgeY, badgeRadius, 0, Math.PI * 2);
-    context.fill();
-    context.fillStyle = '#ffffff';
-    context.font = `${Math.max(7, badgeRadius * 1.35)}px Arial`;
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    context.fillText(String(Math.min(count, 9)), badgeX, badgeY + 0.2);
-    if (count > 9) {
-        context.beginPath();
-        context.fillStyle = '#ffffff';
-        context.arc(badgeX + badgeRadius * 0.78, badgeY - badgeRadius * 0.78, Math.max(1, badgeRadius * 0.22), 0, Math.PI * 2);
-        context.fill();
-    }
-    context.fillStyle = 'rgba(17, 24, 39, 0.42)';
-    context.fillRect(stripLeft - 0.5, stripTop - 0.5, stripWidth + 1, stripHeight + 1);
-    stripColors.forEach(({ colorId }, index) => {
-        const color = getColor(colorId);
-        if (!color)
-            return;
-        context.fillStyle = color.hex;
-        context.fillRect(stripLeft, stripTop + index * segmentHeight, stripWidth, Math.ceil(segmentHeight));
-    });
-    if (count > stripColors.length) {
-        context.fillStyle = 'rgba(255, 255, 255, 0.92)';
-        context.fillRect(stripLeft, stripTop + stripHeight - Math.max(1, stripHeight * 0.12), stripWidth, Math.max(1, stripHeight * 0.12));
-    }
-    context.restore();
 }
 function drawCellAlert(context, left, top, cellSize) {
     const centerX = left + cellSize / 2;

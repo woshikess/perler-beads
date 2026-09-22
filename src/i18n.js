@@ -157,9 +157,13 @@ export const ui = {
               （「调整」tab 正文早在 W0.5 就被砍掉了，只剩这三句带"当前图层"的文案烂在表里），
               且本批要求"用户可见的图层字样要么删掉"——三句都没有渲染路径，直接删。
           **保留**（仍有消费方，别顺手删）：`lockedCanvasHint`（App 两处：生成前拦截 +
-          画布角提示，文案见下）、`layerOverlap`（调色盘 tab 的视图开关，**文本不含"图层"字样**）、
+          画布角提示，文案见下）、
           `colorCleanupHint`（调色盘 tab 的提示，原文不含"图层"）、
           `layerColorsCleaned`/`layerColorsLimited`/`adjustmentLocked`（已改成单层措辞）。
+        ⚠️ B33（用户 2026-09-22）：原来"保留"清单里还有一条 `layerOverlap`（「重叠格子」），
+          本批**已连同那个视图开关一起删除** —— 用户原话「图层的概念在现在的版本当中已经消失了
+          那这个开关也没用了 把它去掉吧」。实测它勾选前后画布**变化 0 像素**（触发条件
+          `stack.length > 1` 在单层模型下永不成立），证据 `_审核\_暂存证据\「重叠格子」功能核实\`。
         */
         usage: '用量',
         totalBeadsLabel: '总颗数',
@@ -181,7 +185,6 @@ export const ui = {
         beadShape: '豆子形状',
         roundBeads: '圆形',
         squareBeads: '方形',
-        layerOverlap: '重叠格子',
         grid: '网格',
         coordinates: '坐标',
         eye: '显示',
@@ -304,11 +307,24 @@ export const ui = {
         // 第 3 批：工具条顶部的 3 个「面板条目」。它们**不是工具**（不进上面的 `tools`），
         // 是"打开某个面板的某一段"的入口，替代了顶栏原来那两个抽屉开关。
         panelEntries: {
-            // B21：三个面板条目改名（依据见 en 侧同一段的注释）
-            material: '图片',
+            /*
+             * B32（user round 17）：**四个抽屉按功能重新命名**，用户原话
+             * 「就叫导入参考规格配色吧」—— 按"做一张图纸的四步"排：
+             *   · material  (upload image + AI generate)          → 导入 / **Import**
+             *   · reference (tracing underlay, draggable)         → 参考 / Reference（不变）
+             *   · palette   (usage + view + params + brand)       → 规格 / **Spec**
+             *   · recolor   (colour list + replace colour)        → 配色 / **Colors**
+             * 为什么换掉 B21 那套：① 抽屉「改色」与工具条上的工具「换色」只差一个字、语义也近；
+             * ② 抽屉「图纸」里其实没有图纸（装的是 视图 / 格子 / 参数调节），而顶栏真正出图纸的
+             *    按钮叫「导出图纸」；③「图片」抽屉里有半屏是 AI 生成设置，名字盖不住。
+             * ⚠️ `data-panel-entry` 的 **id 一个没改**（CSS、既有门禁、备份脚本都按 id 查）；
+             *    改的只有显示名与 `PanelEntryIcon` 的图形。四个新名字都是 2 个汉字 ⇒
+             *    工具条几何应 Δ=0（门禁逐档断言手机仍两行、iPad 四条目 rect 不变）。
+             */
+            material: '导入',
             reference: '参考',
-            palette: '图纸',
-            recolor: '改色',
+            palette: '规格',
+            recolor: '配色',
         },
     },
     en: {
@@ -459,7 +475,7 @@ export const ui = {
         beadShape: 'Bead shape',
         roundBeads: 'Round',
         squareBeads: 'Square',
-        layerOverlap: 'Overlap cells',
+        // B33: `layerOverlap: 'Overlap cells'` removed together with the view switch (see the zh block).
         grid: 'Grid',
         coordinates: 'Coordinates',
         eye: 'Eye',
@@ -574,11 +590,23 @@ export const ui = {
              * ⚠️ The `data-panel-entry` **ids must not change** (CSS, existing gates and backup scripts look them up);
              *    only the display names change. All three are still short words ⇒ rail geometry is unchanged
              *    (the gate asserts the button rects are identical to the pre-rename build).
+             *
+             * ── B32（user round 17：**这一版把 B21 那套整体换掉**）──────────────────────────────
+             * User's words：「就叫导入参考规格配色吧」—— named by the four steps of making a pattern:
+             *   · material  → **Import**（upload image + AI generate ⇒ "把东西弄进来"）
+             *   · reference → **Reference**（unchanged；它确实就是那张临摹参考图）
+             *   · palette   → **Spec**（视图 + 格子读数 + **参数调节** + 品牌版本 ⇒ 图纸的规格）
+             *   · recolor   → **Colors**（色号清单 + 换色）
+             * Why B21's set got replaced：① 抽屉「改色」与同一条工具条上的**工具「换色」**只差一个字、
+             *   语义也近；② 抽屉「图纸」里其实没有图纸（装的是 视图/格子/参数调节），而顶栏真正出图纸的
+             *   按钮叫「导出图纸」；③「图片」抽屉有半屏是 AI 生成设置，名字盖不住。
+             * ⚠️ `data-panel-entry` **ids 一个没改** —— 只改了显示名与 `PanelEntryIcon` 的图形。
+             *   四个新名字都是 2 个汉字 ⇒ 工具条几何应 Δ=0（门禁逐档断手机仍两行、iPad 四条目 rect 不变）。
              */
-            material: 'Image',
+            material: 'Import',
             reference: 'Reference',
-            palette: 'Pattern',
-            recolor: 'Recolor',
+            palette: 'Spec',
+            recolor: 'Colors',
         },
     },
 };

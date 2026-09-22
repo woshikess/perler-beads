@@ -200,42 +200,68 @@ export function ArrowOptionIcon({ arrow }) {
  * 三个图形刻意互不相同，且都**不是任何工具的图标**——面板条目和工具挤在同一列里，
  * 图形撞车会被读成"同一个东西的两种状态"。
  */
+/*
+ * ══════════════════════════════════════════════════════════════════════════════
+ * B32（用户 2026-09-22）：四个面板条目**改名 + 换图标**，一套齐活。
+ * ------------------------------------------------------------------------------
+ * 用户裁决过程（名字三轮、图标三轮，逐轮比对见 `_审核\_规划\_四个抽屉命名方案.md`）：
+ *   · 命名：「就叫导入参考规格配色吧」——按"做一张图纸的四步"排：导入 → 参考 → 规格 → 配色。
+ *     这一套同时解决了两个老问题：① 抽屉「改色」与工具条上的工具「换色」只差一个字、语义也近；
+ *     ② 抽屉「图纸」里其实没有图纸（装的是 视图/格子/参数调节），而顶栏那个真出图纸的按钮叫「导出图纸」。
+ *   · 图标：用户逐个挑选 —— 导入 = 托盘+下箭头（"箭头入托盘"）；
+ *     参考 = 一张图 + **四角控制点**（抽屉里参考图确实能拖动/缩放）；
+ *     规格 = **三滑杆**（那张卡里就是三根滑杆：宽度 / 色数上限 / 容差 ⇒ 用户原话
+ *     「规格其实内部很多的是参数 所以其实也可以用调节参数的类型的logo吧」）；
+ *     配色 = **纸上打格 + 格里填色点**（色号清单里"哪些格子用了哪些色"）。
+ * ⚠️ 四条图形都与工具条上那 10 个工具**不撞脸**（工具里没有托盘、没有嵌套/控制点、没有滑杆、
+ *    没有方格+色点）；门禁 `_verify_B32.cjs` 会逐条比对这些图形与工具图标的路径，确保没有重复。
+ * ⚠️ `data-panel-entry` 的 **id 一个没改**（`material`/`reference`/`palette`/`recolor`）——
+ *    CSS、既有门禁与备份脚本都按 id 查；改的只有**显示名**与**图形**。
+ * ══════════════════════════════════════════════════════════════════════════════
+ */
 export function PanelEntryIcon({ id }) {
     if (id === 'material') {
-        // 「图片」（B21 前叫「素材」）= 一叠图（导入图片 / AI 生成那两块）
+        // 「导入」= 箭头落进托盘（图片进来 + AI 出图，都是"把东西弄进来"）
         return (React.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" },
-            React.createElement("rect", { x: "3.5", y: "6.5", width: "14", height: "11", rx: "1.8" }),
-            React.createElement("path", { d: "M6.5 14.5l3-3 2.5 2.5 2-2 3 3" }),
-            React.createElement("circle", { cx: "8", cy: "10", r: "1.1" }),
-            React.createElement("path", { d: "M19.5 9v8.5c0 .8-.7 1.5-1.5 1.5H7.5" })));
+            React.createElement("path", { d: "M12 3.5v9.5" }),
+            React.createElement("path", { d: "m8.3 9.7 3.7 3.7 3.7-3.7" }),
+            React.createElement("path", { d: "M4.5 14.8v3.4c0 1 .8 1.8 1.8 1.8h11.4c1 0 1.8-.8 1.8-1.8v-3.4" })));
     }
     if (id === 'reference') {
-        // 「参考」= 一张图压在画布上（参考图是叠在拼豆图下面的底图）
+        // 「参考」= 一张图 + 四角控制点（参考图是垫在图纸下/上的底图，且**可拖动、可缩放**）
         return (React.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" },
-            React.createElement("rect", { x: "3.5", y: "4.5", width: "17", height: "12", rx: "1.8" }),
-            React.createElement("path", { d: "M4 13l3.5-3.5L10 12l3-3 4 4" }),
-            React.createElement("circle", { cx: "8.5", cy: "8", r: "1.1" }),
-            React.createElement("path", { d: "M6 20h12" })));
+            React.createElement("rect", { x: "5.6", y: "5.6", width: "12.8", height: "12.8", rx: "1.5" }),
+            React.createElement("path", { d: "M7.6 15.8l3-3 2.4 2.4 1.8-1.8 2.8 2.8" }),
+            React.createElement("circle", { cx: "9.4", cy: "9.6", r: "1" }),
+            React.createElement("rect", { x: "3.6", y: "3.6", width: "3", height: "3", rx: ".9", fill: "currentColor" }),
+            React.createElement("rect", { x: "17.4", y: "3.6", width: "3", height: "3", rx: ".9", fill: "currentColor" }),
+            React.createElement("rect", { x: "3.6", y: "17.4", width: "3", height: "3", rx: ".9", fill: "currentColor" }),
+            React.createElement("rect", { x: "17.4", y: "17.4", width: "3", height: "3", rx: ".9", fill: "currentColor" })));
     }
     if (id === 'recolor') {
-        // 「改色」（B27）= 调色盘 —— B21 把这个图标腾出来了（「图纸」那条改用了格子纸）
+        // 「配色」= 纸上打格 + 格里填色点（"这张图纸用到的颜色"）
         return (React.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" },
-            React.createElement("path", { d: "M12 3.5c4.7 0 8.5 3.3 8.5 7.4 0 2.6-2 4.3-4.6 4.3h-1.6c-.9 0-1.6.7-1.6 1.6 0 .5.2.9.5 1.3.2.3.3.6.3 1 0 .8-.7 1.4-1.5 1.4-4.7 0-8.5-3.8-8.5-8.5S7.3 3.5 12 3.5z" }),
-            React.createElement("circle", { cx: "8.6", cy: "10", r: "1.2" }),
-            React.createElement("circle", { cx: "12", cy: "7.6", r: "1.2" }),
-            React.createElement("circle", { cx: "15.4", cy: "10", r: "1.2" })));
+            React.createElement("rect", { x: "4.5", y: "4.5", width: "15", height: "15", rx: "1.8" }),
+            React.createElement("path", { d: "M4.5 9.5h15M4.5 14.5h15M9.5 4.5v15M14.5 4.5v15" }),
+            React.createElement("circle", { cx: "7", cy: "7", r: "1.25", fill: "currentColor" }),
+            React.createElement("circle", { cx: "12", cy: "7", r: "1.25", fill: "currentColor" }),
+            React.createElement("circle", { cx: "12", cy: "12", r: "1.25", fill: "currentColor" }),
+            React.createElement("circle", { cx: "17", cy: "12", r: "1.25", fill: "currentColor" })));
     }
     /*
-     * 「图纸」（B21 前叫「颜色」）= **格子纸**。
+     * 「规格」= **三根滑杆**（不是"一张图纸"）。
      *
-     * 为什么必须换掉原来的调色盘：这个条目早就不再打开调色盘了 —— 色盘在 B10 就搬到了画布右上角
-     * 那个圆点的浮层里，而本抽屉现在装的是「用量（色号清单）+ 视图 + 参数调节（尺寸 / 品牌 / 版本）」。
-     * 用户第 3 条的原话正是「还叫颜色已经不合适了」⇒ 名字与图形一起换成"图纸/格子纸"。
-     * 图形刻意与另外两个不同（那两张都是"图片"），这里用**格网 + 中间一颗豆**表达"拼豆图纸"。
+     * 为什么从"格子纸 + 豆"换成滑杆：这个抽屉里装的是 视图（豆形/网格/坐标/色号）+ 格子（悬停读数）
+     * + **参数调节**（宽度 / 色数上限 / 容差 / 背景）+ 色号品牌与版本 —— 主体是**参数**，
+     * 而那张卡里用的控件就是三根 `input[type=range]`。用户原话：「规格其实内部很多的是参数
+     * 所以其实也可以用调节参数的类型的logo吧」。滑杆还顺带与工具条上那 10 个工具零撞脸。
      */
     return (React.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" },
-        React.createElement("rect", { x: "3.5", y: "3.5", width: "17", height: "17", rx: "1.8" }),
-        React.createElement("path", { d: "M3.5 9.2h17M3.5 14.8h17M9.2 3.5v17M14.8 3.5v17" }),
-        React.createElement("circle", { cx: "12", cy: "12", r: "1.8" })));
+        React.createElement("path", { d: "M4 7.2h16" }),
+        React.createElement("circle", { cx: "9.2", cy: "7.2", r: "2.2" }),
+        React.createElement("path", { d: "M4 12h16" }),
+        React.createElement("circle", { cx: "15", cy: "12", r: "2.2" }),
+        React.createElement("path", { d: "M4 16.8h16" }),
+        React.createElement("circle", { cx: "7.6", cy: "16.8", r: "2.2" })));
 }
 //# sourceMappingURL=icons.js.map
