@@ -1678,6 +1678,11 @@ export default function App() {
             }
             // B36：主体掩膜。只有「去背景」模式、且模型已就绪时才试着算；
             // 判断程序（是不是照片 + 模型认不认识主体）任一不通过就返回 null ⇒ 原样走老算法。
+            // B37：**AI 重绘的图照样可以走模型**（第一版我错误地把它们整个排除掉了 —— 见下）。
+            //   把 AI 画出来的那层背景抠干净的正是模型：容差去背做不到，因为方舟画的「纯白背景」
+            //   并不是真的 #FFFFFF（有渐变与细纹），只靠容差会留下满屏近乎白色的碎豆。
+            //   所以这里不做「是 AI 图就不用模型」的一刀切，而是靠 subjectGate 的判据③
+            //   去识别「模型这次给出的掩膜根本不像个人」——那种情况才退回老算法。
             const subjectMask = backgroundMode === 'keep' ? null : await computeSubjectMask(sourceFile, convertWidth);
             if (requestId !== generationRequestRef.current)
                 return;
