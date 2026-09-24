@@ -1,6 +1,7 @@
 // W0.3：601 亮度的定义收敛到 ./luminance（原先本文件与 exporters.ts 各有一份逐字相同的副本）
 import { luminance601 as luminance } from './luminance.js';
 import { colorDistance, nearestPaletteColor, palette } from './palette.js';
+import { CELL_KEEP_RATIO } from './subjectGate.js';
 const styleProfiles = {
     cartoon: {
         sampleSide: 7,
@@ -78,9 +79,49 @@ function imageDataToBeads(data, sourceWidth, sourceHeight, options) {
     const protectedCells = options.preserveEyeHighlight
         ? protectEyeHighlights(reducedCells, data, sourceWidth, sourceHeight, width, height, candidates, activePalette)
         : reducedCells;
-    const colorsUsed = new Set(protectedCells.filter(Boolean)).size;
-    const totalBeads = protectedCells.filter(Boolean).length;
-    return { width, height, cells: protectedCells, colorsUsed, totalBeads, effectiveTolerance };
+    // 主体掩膜（B36）：只做减法 —— 把模型判为「背景」的格清空。
+    // 放在**最后**：这样合并近似色 / 去零星 / 去小区域 / 眼睛高光都不会把掩膜清掉的格又补回来。
+    // 传了掩膜才走这一步；没传时 `maskedCells === protectedCells`，行为与改动前逐格一致。
+    const maskedCells = options.subjectMask
+        ? dropCellsOutsideSubject(protectedCells, options.subjectMask, {
+            gridWidth: width,
+            gridHeight: height,
+            sourceWidth,
+            sourceHeight,
+            sampleSide: profile.sampleSide,
+        })
+        : protectedCells;
+    const colorsUsed = new Set(maskedCells.filter(Boolean)).size;
+    const totalBeads = maskedCells.filter(Boolean).length;
+    return { width, height, cells: maskedCells, colorsUsed, totalBeads, effectiveTolerance };
+}
+/**
+ * 把「主体之外」的格清空（B36）。**只做减法**：原本是空的格不会被填回豆，颜色也不会被改。
+ *
+ * 判定口径与产品取样器一致：每格取 `sampleSide × sampleSide` 个采样点，
+ * 落在掩膜主体内的比例达到 `CELL_KEEP_RATIO` 才保留这一格。
+ */
+function dropCellsOutsideSubject(cells, subjectMask, box) {
+    const { gridWidth, gridHeight, sourceWidth, sourceHeight, sampleSide } = box;
+    if (subjectMask.length !== sourceWidth * sourceHeight)
+        return cells;
+    const total = sampleSide * sampleSide;
+    return cells.map((colorId, index) => {
+        if (!colorId)
+            return null;
+        const x = index % gridWidth;
+        const y = (index - x) / gridWidth;
+        let hit = 0;
+        for (let sy = 0; sy < sampleSide; sy += 1) {
+            for (let sx = 0; sx < sampleSide; sx += 1) {
+                const sourceX = Math.min(sourceWidth - 1, Math.max(0, Math.floor(((x + (sx + 0.5) / sampleSide) / gridWidth) * sourceWidth)));
+                const sourceY = Math.min(sourceHeight - 1, Math.max(0, Math.floor(((y + (sy + 0.5) / sampleSide) / gridHeight) * sourceHeight)));
+                if (subjectMask[sourceY * sourceWidth + sourceX] === 1)
+                    hit += 1;
+            }
+        }
+        return hit / total >= CELL_KEEP_RATIO ? colorId : null;
+    });
 }
 function loadImage(file) {
     return new Promise((resolve, reject) => {

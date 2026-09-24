@@ -4,6 +4,9 @@ import { AI_REDRAW_TIMEOUT_MS, ARK_ENDPOINT, buildPrompt, calcSize } from './ark
 import { ARK_LINKS, ARK_MODEL_CANDIDATES, detectActivatedModel, formatRawBits } from './arkDiagnostics.js';
 import { downloadPrintPdf, downloadPrintPng, downloadProjectJson, downloadUsageWorkbook } from './exporters.js';
 import { imageFileToBeads } from './imageToBeads.js';
+// B36：主体分割模型（MediaPipe Selfie Multiclass）。打开页面就开始后台加载，失败则静默走老算法。
+import { ensureSegmenter, isModelReady, segmentSubject } from './segmentModel.js';
+import { evaluateSubjectGate, upscaleSubjectMask } from './subjectGate.js';
 import ParamNumberField from './ParamNumberField.js';
 import { getColor } from './palette.js';
 // KI-012（W3.4 接线）：色板必须跟着 `project.activeBrand` 走。
@@ -107,6 +110,72 @@ const defaultImportSettings = {
 /** AI 重绘一次的费用不低，但也不该无限堆，历史最多留这么多张
  *  注意：界面上一行只放得下 5 个缩略图，所以不要超过 5，否则左栏会变高 */
 const AI_HISTORY_LIMIT = 5;
+/** B36 判据用的分析尺寸：把图缩到 256×256 后算噪点中位数（与模型输入同尺寸，省一次缩放） */
+const SUBJECT_GATE_ANALYSIS_SIDE = 256;
+/** 把 File 解码成 HTMLImageElement（只用于算主体掩膜；出图那边自己还会解码一次） */
+function decodeImageFile(file) {
+    return new Promise((resolve) => {
+        const url = URL.createObjectURL(file);
+        const image = new Image();
+        image.onload = () => {
+            URL.revokeObjectURL(url);
+            resolve(image);
+        };
+        image.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve(null);
+        };
+        image.src = url;
+    });
+}
+/**
+ * 算「主体掩膜」（B36）。**返回 null 表示这次不要用模型**，调用方原样走老算法。
+ *
+ * 四步，任何一步不满足都返回 null：
+ * 1. 模型没就绪（没加载完 / 加载失败）⇒ null。**不等待、不重试**：不能让出图等模型。
+ * 2. 解码图片 ⇒ 缩到 256×256 算噪点中位数，判断「这是不是照片」；
+ * 3. 跑模型得类别掩膜，算「前景格占比 / 最大连通块」，判断「模型认不认识主体」；
+ * 4. 两条都过 ⇒ 把掩膜放大到原图尺寸返回；否则 null。
+ *
+ * 实测分离度（10 张素材）：照片噪点中位数 7/3/3/3，画与像素画恒为 0；
+ * 风景前景格 1~5%、复杂城市 0%，人像/猫 37~66% —— 判据分得很开。
+ */
+async function computeSubjectMask(file, convertWidth) {
+    if (!isModelReady())
+        return null;
+    try {
+        const image = await decodeImageFile(file);
+        if (!image)
+            return null;
+        const sourceWidth = Math.max(1, image.naturalWidth);
+        const sourceHeight = Math.max(1, image.naturalHeight);
+        const side = SUBJECT_GATE_ANALYSIS_SIDE;
+        const canvas = document.createElement('canvas');
+        canvas.width = side;
+        canvas.height = side;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (!context)
+            return null;
+        context.imageSmoothingEnabled = true;
+        context.drawImage(image, 0, 0, side, side);
+        const analysis = context.getImageData(0, 0, side, side).data;
+        const mask = await segmentSubject(image);
+        const gridWidth = Math.max(1, Math.round(convertWidth));
+        const gridHeight = Math.max(1, Math.round((sourceHeight / sourceWidth) * gridWidth));
+        const gate = evaluateSubjectGate(analysis, side, side, mask, {
+            gridWidth,
+            gridHeight,
+            sourceWidth,
+            sourceHeight,
+        }, 7);
+        if (!mask || !gate.usable)
+            return null;
+        return upscaleSubjectMask(mask, sourceWidth, sourceHeight);
+    }
+    catch {
+        return null;
+    }
+}
 /** 默认用的火山方舟模型。不同账号开通的模型不一样，程序会自动识别出可用的那个 */
 const DEFAULT_AI_MODEL = 'doubao-seedream-5-0-pro-260628';
 const defaultColorId = 'mard-h7';
@@ -452,6 +521,18 @@ export default function App() {
     useEffect(() => {
         localStorage.setItem(languageKey, language);
     }, [language]);
+    /**
+     * B36：**打开页面就开始后台加载主体分割模型**（用户口径：一次可能传多张图，第一张不是人像、后面可能是，
+     * 所以不等到判定再加载）。
+     *
+     * 三条性质：
+     * - **不阻塞**：`void` 掉，首屏与上传、出图都不等它；
+     * - **失败无所谓**：`ensureSegmenter()` 内部吞掉所有异常并返回 `null`，出图会原样走老算法；
+     * - **只在挂载时跑一次**：模块内部用同一个 Promise 做幂等，重复调用不会再下载。
+     */
+    useEffect(() => {
+        void ensureSegmenter();
+    }, []);
     /**
      * W6 接线（W4 §8.5）：启动时从 IndexedDB 恢复上次的源图 —— 这是 KI-007 的**根修**。
      *
@@ -1595,6 +1676,11 @@ export default function App() {
             else {
                 setNotice(language === 'zh' ? '正在本地更新拼豆图案...' : 'Updating bead pattern locally...');
             }
+            // B36：主体掩膜。只有「去背景」模式、且模型已就绪时才试着算；
+            // 判断程序（是不是照片 + 模型认不认识主体）任一不通过就返回 null ⇒ 原样走老算法。
+            const subjectMask = backgroundMode === 'keep' ? null : await computeSubjectMask(sourceFile, convertWidth);
+            if (requestId !== generationRequestRef.current)
+                return;
             const result = await imageFileToBeads(sourceFile, {
                 width: convertWidth,
                 maxColors,
@@ -1609,6 +1695,8 @@ export default function App() {
                 // 只有「AI 图 → 图纸」这一步才保护眼睛高光：
                 // 低格数下高光容易被降采样吃掉，把它补回来；照片直接转图纸时不做，避免误判。
                 preserveEyeHighlight: fromAi,
+                // B36：主体掩膜（null = 这次不用模型，逐格与改动前一致）
+                subjectMask,
             });
             if (requestId !== generationRequestRef.current)
                 return;
