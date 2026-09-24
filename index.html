@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -21,9 +21,115 @@
         }
       }
     </script>
+    <!-- B36 开场动画：样式内联，且自身不依赖任何模块（要的就是「模块还没到也能显示」） -->
+    <style>
+      #boot {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: grid;
+        place-items: center;
+        align-content: center;
+        gap: 14px;
+        background: #f4f2ed;
+        color: #6a6f78;
+        font: 13px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        letter-spacing: .3px;
+      }
+      #boot.gone { opacity: 0; transition: opacity 320ms ease; pointer-events: none; }
+      #boot .boot-heart-wrap { animation: bootBeat 1700ms ease-in-out infinite; transform-origin: center; }
+      @keyframes bootBeat {
+        0%, 100% { transform: scale(1); }
+        14% { transform: scale(1.07); }
+        28% { transform: scale(.99); }
+        42% { transform: scale(1.045); }
+        56% { transform: scale(1); }
+      }
+      #boot .boot-heart { display: grid; grid-template-columns: repeat(11, 16px); gap: 3px; }
+      #boot .boot-heart i {
+        width: 16px;
+        height: 16px;
+        border-radius: 3px;
+        opacity: 0;
+        transform: scale(.55);
+        /* 第三条（重画循环）的时长在下面按 CYCLE_MS 写死；每条 animation 共用同一个 delay 列表 */
+        animation: bootBeadIn 260ms cubic-bezier(.2, .8, .3, 1.2) both, bootOutline 70ms ease-in-out both, bootReplay 10150ms linear both;
+      }
+      @keyframes bootBeadIn {
+        from { opacity: 0; transform: scale(.55); }
+        to { opacity: 1; transform: scale(1); }
+      }
+      @keyframes bootOutline {
+        from { box-shadow: 0 0 0 0 rgba(240, 200, 75, 0); }
+        50% { box-shadow: 0 0 0 3px rgba(240, 200, 75, .55); }
+        to { box-shadow: 0 0 0 0 rgba(240, 200, 75, 0); }
+      }
+      @keyframes bootReplay {
+        0%, 88% { opacity: 1; }
+        100% { opacity: 0; }
+      }
+      #boot .boot-text::after { content: '...'; animation: bootDots 1.4s steps(4, end) infinite; }
+      @keyframes bootDots {
+        0% { content: ''; }
+        25% { content: '.'; }
+        50% { content: '..'; }
+        75%, 100% { content: '...'; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot .boot-heart i { opacity: 1; transform: none; animation: none; }
+        #boot .boot-heart-wrap { animation: none; }
+        #boot .boot-text::after { content: '...'; animation: none; }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <!-- B36：React 启动前的开场动画（实测这段时间原本是 16.9 秒白屏） -->
+    <div id="boot" role="status" aria-live="polite">
+      <div class="boot-heart-wrap"><div class="boot-heart" id="bootHeart"><i style="grid-area:1/3;background:#17656a;animation-delay:0ms,3850ms,0ms"></i><i style="grid-area:1/4;background:#17656a;animation-delay:55ms,3920ms,0ms"></i><i style="grid-area:1/8;background:#17656a;animation-delay:110ms,3990ms,0ms"></i><i style="grid-area:1/9;background:#f0c84b;animation-delay:165ms,4060ms,0ms"></i><i style="grid-area:2/2;background:#17656a;animation-delay:220ms,4130ms,0ms"></i><i style="grid-area:2/3;background:#17656a;animation-delay:275ms,4200ms,0ms"></i><i style="grid-area:2/4;background:#17656a;animation-delay:330ms,4270ms,0ms"></i><i style="grid-area:2/5;background:#17656a;animation-delay:385ms,4340ms,0ms"></i><i style="grid-area:2/7;background:#17656a;animation-delay:440ms,4410ms,0ms"></i><i style="grid-area:2/8;background:#17656a;animation-delay:495ms,4480ms,0ms"></i><i style="grid-area:2/9;background:#f0c84b;animation-delay:550ms,4550ms,0ms"></i><i style="grid-area:2/10;background:#17656a;animation-delay:605ms,4620ms,0ms"></i><i style="grid-area:3/1;background:#17656a;animation-delay:660ms,4690ms,0ms"></i><i style="grid-area:3/2;background:#17656a;animation-delay:715ms,4760ms,0ms"></i><i style="grid-area:3/3;background:#17656a;animation-delay:770ms,4830ms,0ms"></i><i style="grid-area:3/4;background:#17656a;animation-delay:825ms,4900ms,0ms"></i><i style="grid-area:3/5;background:#17656a;animation-delay:880ms,4970ms,0ms"></i><i style="grid-area:3/6;background:#f0c84b;animation-delay:935ms,5040ms,0ms"></i><i style="grid-area:3/7;background:#17656a;animation-delay:990ms,5110ms,0ms"></i><i style="grid-area:3/8;background:#17656a;animation-delay:1045ms,5180ms,0ms"></i><i style="grid-area:3/9;background:#17656a;animation-delay:1100ms,5250ms,0ms"></i><i style="grid-area:3/10;background:#17656a;animation-delay:1155ms,5320ms,0ms"></i><i style="grid-area:3/11;background:#17656a;animation-delay:1210ms,5390ms,0ms"></i><i style="grid-area:4/1;background:#17656a;animation-delay:1265ms,5460ms,0ms"></i><i style="grid-area:4/2;background:#f0c84b;animation-delay:1320ms,5530ms,0ms"></i><i style="grid-area:4/3;background:#17656a;animation-delay:1375ms,5600ms,0ms"></i><i style="grid-area:4/4;background:#17656a;animation-delay:1430ms,5670ms,0ms"></i><i style="grid-area:4/5;background:#17656a;animation-delay:1485ms,5740ms,0ms"></i><i style="grid-area:4/6;background:#17656a;animation-delay:1540ms,5810ms,0ms"></i><i style="grid-area:4/7;background:#17656a;animation-delay:1595ms,5880ms,0ms"></i><i style="grid-area:4/8;background:#17656a;animation-delay:1650ms,5950ms,0ms"></i><i style="grid-area:4/9;background:#f0c84b;animation-delay:1705ms,6020ms,0ms"></i><i style="grid-area:4/10;background:#17656a;animation-delay:1760ms,6090ms,0ms"></i><i style="grid-area:4/11;background:#17656a;animation-delay:1815ms,6160ms,0ms"></i><i style="grid-area:5/1;background:#17656a;animation-delay:1870ms,6230ms,0ms"></i><i style="grid-area:5/2;background:#17656a;animation-delay:1925ms,6300ms,0ms"></i><i style="grid-area:5/3;background:#17656a;animation-delay:1980ms,6370ms,0ms"></i><i style="grid-area:5/4;background:#17656a;animation-delay:2035ms,6440ms,0ms"></i><i style="grid-area:5/5;background:#f0c84b;animation-delay:2090ms,6510ms,0ms"></i><i style="grid-area:5/6;background:#17656a;animation-delay:2145ms,6580ms,0ms"></i><i style="grid-area:5/7;background:#17656a;animation-delay:2200ms,6650ms,0ms"></i><i style="grid-area:5/8;background:#17656a;animation-delay:2255ms,6720ms,0ms"></i><i style="grid-area:5/9;background:#17656a;animation-delay:2310ms,6790ms,0ms"></i><i style="grid-area:5/10;background:#17656a;animation-delay:2365ms,6860ms,0ms"></i><i style="grid-area:5/11;background:#17656a;animation-delay:2420ms,6930ms,0ms"></i><i style="grid-area:6/2;background:#f0c84b;animation-delay:2475ms,7000ms,0ms"></i><i style="grid-area:6/3;background:#17656a;animation-delay:2530ms,7070ms,0ms"></i><i style="grid-area:6/4;background:#17656a;animation-delay:2585ms,7140ms,0ms"></i><i style="grid-area:6/5;background:#17656a;animation-delay:2640ms,7210ms,0ms"></i><i style="grid-area:6/6;background:#17656a;animation-delay:2695ms,7280ms,0ms"></i><i style="grid-area:6/7;background:#17656a;animation-delay:2750ms,7350ms,0ms"></i><i style="grid-area:6/8;background:#17656a;animation-delay:2805ms,7420ms,0ms"></i><i style="grid-area:6/9;background:#f0c84b;animation-delay:2860ms,7490ms,0ms"></i><i style="grid-area:6/10;background:#17656a;animation-delay:2915ms,7560ms,0ms"></i><i style="grid-area:7/3;background:#17656a;animation-delay:2970ms,7630ms,0ms"></i><i style="grid-area:7/4;background:#17656a;animation-delay:3025ms,7700ms,0ms"></i><i style="grid-area:7/5;background:#17656a;animation-delay:3080ms,7770ms,0ms"></i><i style="grid-area:7/6;background:#17656a;animation-delay:3135ms,7840ms,0ms"></i><i style="grid-area:7/7;background:#17656a;animation-delay:3190ms,7910ms,0ms"></i><i style="grid-area:7/8;background:#f0c84b;animation-delay:3245ms,7980ms,0ms"></i><i style="grid-area:7/9;background:#17656a;animation-delay:3300ms,8050ms,0ms"></i><i style="grid-area:8/4;background:#17656a;animation-delay:3355ms,8120ms,0ms"></i><i style="grid-area:8/5;background:#17656a;animation-delay:3410ms,8190ms,0ms"></i><i style="grid-area:8/6;background:#17656a;animation-delay:3465ms,8260ms,0ms"></i><i style="grid-area:8/7;background:#17656a;animation-delay:3520ms,8330ms,0ms"></i><i style="grid-area:8/8;background:#17656a;animation-delay:3575ms,8400ms,0ms"></i><i style="grid-area:9/5;background:#f0c84b;animation-delay:3630ms,8470ms,0ms"></i><i style="grid-area:9/6;background:#17656a;animation-delay:3685ms,8540ms,0ms"></i><i style="grid-area:9/7;background:#17656a;animation-delay:3740ms,8610ms,0ms"></i><i style="grid-area:10/6;background:#17656a;animation-delay:3795ms,8680ms,0ms"></i></div></div>
+      <div class="boot-text">正在生成图案</div>
+    </div>
+    <script>
+      (function () {
+        var boot = document.getElementById('boot');
+        var root = document.getElementById('root');
+        if (!boot || !root) return;
+        var done = false;
+        function handoff() {
+          if (done) return;
+          done = true;
+          if (typeof replayTimer !== 'undefined' && replayTimer) clearInterval(replayTimer);
+          boot.className = 'gone';
+          setTimeout(function () { if (boot.parentNode) boot.parentNode.removeChild(boot); }, 360);
+        }
+        // React 一旦往 #root 里挂了东西，就说明界面可用 ⇒ 交接
+        // 反复「重新摆爱心」：每个循环重建一次里面的 <i>，CSS 动画就会从头再播一遍
+        var BEADS = [{"y":1,"x":3,"color":"#17656a"},{"y":1,"x":4,"color":"#17656a"},{"y":1,"x":8,"color":"#17656a"},{"y":1,"x":9,"color":"#f0c84b"},{"y":2,"x":2,"color":"#17656a"},{"y":2,"x":3,"color":"#17656a"},{"y":2,"x":4,"color":"#17656a"},{"y":2,"x":5,"color":"#17656a"},{"y":2,"x":7,"color":"#17656a"},{"y":2,"x":8,"color":"#17656a"},{"y":2,"x":9,"color":"#f0c84b"},{"y":2,"x":10,"color":"#17656a"},{"y":3,"x":1,"color":"#17656a"},{"y":3,"x":2,"color":"#17656a"},{"y":3,"x":3,"color":"#17656a"},{"y":3,"x":4,"color":"#17656a"},{"y":3,"x":5,"color":"#17656a"},{"y":3,"x":6,"color":"#f0c84b"},{"y":3,"x":7,"color":"#17656a"},{"y":3,"x":8,"color":"#17656a"},{"y":3,"x":9,"color":"#17656a"},{"y":3,"x":10,"color":"#17656a"},{"y":3,"x":11,"color":"#17656a"},{"y":4,"x":1,"color":"#17656a"},{"y":4,"x":2,"color":"#f0c84b"},{"y":4,"x":3,"color":"#17656a"},{"y":4,"x":4,"color":"#17656a"},{"y":4,"x":5,"color":"#17656a"},{"y":4,"x":6,"color":"#17656a"},{"y":4,"x":7,"color":"#17656a"},{"y":4,"x":8,"color":"#17656a"},{"y":4,"x":9,"color":"#f0c84b"},{"y":4,"x":10,"color":"#17656a"},{"y":4,"x":11,"color":"#17656a"},{"y":5,"x":1,"color":"#17656a"},{"y":5,"x":2,"color":"#17656a"},{"y":5,"x":3,"color":"#17656a"},{"y":5,"x":4,"color":"#17656a"},{"y":5,"x":5,"color":"#f0c84b"},{"y":5,"x":6,"color":"#17656a"},{"y":5,"x":7,"color":"#17656a"},{"y":5,"x":8,"color":"#17656a"},{"y":5,"x":9,"color":"#17656a"},{"y":5,"x":10,"color":"#17656a"},{"y":5,"x":11,"color":"#17656a"},{"y":6,"x":2,"color":"#f0c84b"},{"y":6,"x":3,"color":"#17656a"},{"y":6,"x":4,"color":"#17656a"},{"y":6,"x":5,"color":"#17656a"},{"y":6,"x":6,"color":"#17656a"},{"y":6,"x":7,"color":"#17656a"},{"y":6,"x":8,"color":"#17656a"},{"y":6,"x":9,"color":"#f0c84b"},{"y":6,"x":10,"color":"#17656a"},{"y":7,"x":3,"color":"#17656a"},{"y":7,"x":4,"color":"#17656a"},{"y":7,"x":5,"color":"#17656a"},{"y":7,"x":6,"color":"#17656a"},{"y":7,"x":7,"color":"#17656a"},{"y":7,"x":8,"color":"#f0c84b"},{"y":7,"x":9,"color":"#17656a"},{"y":8,"x":4,"color":"#17656a"},{"y":8,"x":5,"color":"#17656a"},{"y":8,"x":6,"color":"#17656a"},{"y":8,"x":7,"color":"#17656a"},{"y":8,"x":8,"color":"#17656a"},{"y":9,"x":5,"color":"#f0c84b"},{"y":9,"x":6,"color":"#17656a"},{"y":9,"x":7,"color":"#17656a"},{"y":10,"x":6,"color":"#17656a"}];
+        var CELL_MS = 55;
+        var CYCLE_MS = 10150;
+        var heart = document.getElementById('bootHeart');
+        var replayTimer = null;
+        if (heart) {
+          replayTimer = setInterval(function () {
+            if (document.hidden) return; // 后台标签页不折腾
+            var html = '';
+            for (var i = 0; i < BEADS.length; i += 1) {
+              var b = BEADS[i];
+              var delay = (i * CELL_MS) + 'ms,' + (BEADS.length * CELL_MS + i * 70) + 'ms,0ms';
+              html += '<i style="grid-area:' + b.y + '/' + b.x + ';background:' + b.color + ';animation-delay:' + delay + '"></i>';
+            }
+            heart.innerHTML = html;
+          }, CYCLE_MS);
+        }
+        var observer = new MutationObserver(function () {
+          if (root.childNodes.length > 0) { observer.disconnect(); if (replayTimer) clearInterval(replayTimer); handoff(); }
+        });
+        observer.observe(root, { childList: true });
+        if (root.childNodes.length > 0) handoff();
+        // 兜底：万一 React 起不来，也不能让动画永远盖着页面（10 秒后放行）
+        setTimeout(handoff, 10000);
+      })();
+    </script>
     <script src="./vendor/react.production.min.js"></script>
     <script src="./vendor/react-dom.production.min.js"></script>
     <script type="module" src="./vendor/react-boot.js"></script>

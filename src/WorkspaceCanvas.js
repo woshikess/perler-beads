@@ -1,4 +1,5 @@
 import { getColor } from './palette.js';
+import GeneratingHeart from './GeneratingHeart.js';
 import { CloseIcon } from './icons.js';
 // 本仓库**没有打包器**：`react-dom` 没有 import-map 条目（只有 `react-dom/client`），
 // `ReactDOM` 是 `vendor/react-dom.production.min.js` 挂上的 UMD 全局；`src/global.d.ts`
@@ -16,7 +17,7 @@ import { installTouchTitleTips, useTouchGestures } from './useTouchGestures.js';
 // ⇒ 那是一条**死 import**（`tsconfig` 没开 `noUnusedLocals`，所以编译器不会提醒）。已删。
 // 断点常量本身仍在 `useMediaQuery.ts` 里，`App.tsx` 是它唯一的运行时消费方。
 const { useEffect, useMemo, useRef, useState } = React;
-export default function WorkspaceCanvas({ project, selectedColorId, highlightedColorId, highlightedCellIndices, formatColorCode, tool, eraserSize, eraserScope, moveMode, mirrorMode, mirrorDirection, shapeKind, shapeFillMode, arrowKind, textToolValue, textToolDirection, textToolSize, textToolSpacing, onTextToolSizeChange, referenceImageUrl, referenceImageVisible, referenceImageOpacity, referenceImageScale, referenceImageOffset, referenceImageAdjusting, referenceImagePlacement, referenceAdjustHint, onReferenceOffsetChange, onReferenceScaleChange, clipboardPattern, clipboardPhase, copyMode, copySelectionIndices, onCommitStart, onCellsChange, onReplaceColor, onCopyPattern, onCopySelectionChange, onPastePattern, onPickColor, onHover, fitLabel, canEdit, lockedHint, totalBeads, beadUnit, statusFacts, notice, noticeIsError, openPanel, setOpenPanel, panelLayout, paletteDotOpen, onPaletteDotClick, onPaletteDotCanvasPointerDown, paletteDotRef, paletteDotLabel, }) {
+export default function WorkspaceCanvas({ project, selectedColorId, highlightedColorId, highlightedCellIndices, formatColorCode, tool, eraserSize, eraserScope, moveMode, mirrorMode, mirrorDirection, shapeKind, shapeFillMode, arrowKind, textToolValue, textToolDirection, textToolSize, textToolSpacing, onTextToolSizeChange, referenceImageUrl, referenceImageVisible, referenceImageOpacity, referenceImageScale, referenceImageOffset, referenceImageAdjusting, referenceImagePlacement, referenceAdjustHint, onReferenceOffsetChange, onReferenceScaleChange, clipboardPattern, clipboardPhase, copyMode, copySelectionIndices, onCommitStart, onCellsChange, onReplaceColor, onCopyPattern, onCopySelectionChange, onPastePattern, onPickColor, onHover, fitLabel, canEdit, isGenerating = false, generatingLabel, lockedHint, totalBeads, beadUnit, statusFacts, notice, noticeIsError, openPanel, setOpenPanel, panelLayout, paletteDotOpen, onPaletteDotClick, onPaletteDotCanvasPointerDown, paletteDotRef, paletteDotLabel, }) {
     const canvasRef = useRef(null);
     const wrapperRef = useRef(null);
     const draftCellsRef = useRef(getActiveLayerCells(project));
@@ -1021,6 +1022,8 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
     const loupeColorId = loupe ? getTopVisibleColor(project, loupe.cell.y * project.width + loupe.cell.x) : null;
     const loupeCode = loupeColorId ? (formatColorCode?.(loupeColorId) ?? '') : '';
     return (React.createElement("div", { className: "workspace", ref: wrapperRef },
+        isGenerating && (React.createElement("div", { className: "workspace-generating" },
+            React.createElement(GeneratingHeart, { label: generatingLabel }))),
         React.createElement("canvas", { ref: canvasRef, className: canvasClassName, "data-tool": canvasTool, "data-eraser-scope": canvasEraserScope, onContextMenu: (event) => event.preventDefault(), onPointerDown: handlePointerDown, onPointerMove: handlePointerMove, onPointerUp: handlePointerUp, onPointerCancel: (event) => handlePointerUp(event, true), onPointerLeave: handlePointerLeave, onWheel: handleWheel }),
         loupe && (() => {
             const wrap = wrapperRef.current;

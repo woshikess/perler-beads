@@ -6642,5 +6642,104 @@ body {
     bottom: -3.5px;
   }
 }
+/* ===== B36：正在生成图案的加载动画（像素心形）+ 画布遮罩 =====
+   心形点阵单一数据源在 src/heartPixels.ts；打开网站的那份在 scripts/write-html.cjs（壳里抄了一份字面量）。
+   颜色只用站内已有的：强调青绿 #17656a、金黄 #f0c84b、浅青 #8fb9b6。
 
+   用户 2026-09-23 实测反馈：第一版**只播一遍就停住、而且没有跳动**。原因：单颗豆的动画写了
+   `forwards`（播完停在末态）、没有循环。这一版改成——
+     · 每颗豆按 `animation-delay` 逐格「画」出来（画的过程不循环，靠 React 按周期重建 DOM 重播）；
+     · 整块心形由外层 .generating-heart-beat 做**心跳缩放**，一直在跳；
+     · 每颗豆还有一条「画完淡出」的循环动画，周期 = 整个循环，于是「画完 → 淡出 → 重画」自动接上。
+   ⚠️ 循环时长必须与 src/GeneratingHeart.tsx 的 CYCLE_MS、scripts/write-html.cjs 的循环一致。 */
+.generating-heart {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  color: var(--text-muted);
+}
+.generating-heart-beat {
+  animation: ghBeat 1700ms ease-in-out infinite;
+  transform-origin: center;
+}
+@keyframes ghBeat {
+  0%, 100% { transform: scale(1); }
+  14% { transform: scale(1.07); }
+  28% { transform: scale(.99); }
+  42% { transform: scale(1.045); }
+  56% { transform: scale(1); }
+}
+.generating-heart-grid {
+  --gh-cell: 16px;
+  display: grid;
+  gap: 3px;
+}
+.generating-heart-bead {
+  width: var(--gh-cell);
+  height: var(--gh-cell);
+  border-radius: 3px;
+  opacity: 0;
+  transform: scale(.55);
+  /* 第三条（重画循环）的时长由组件按 CYCLE_MS 覆盖 */
+  animation: ghBeadIn 260ms cubic-bezier(.2, .8, .3, 1.2) both, ghOutline 70ms ease-in-out both, ghReplay 3400ms linear both;
+}
+/* 逐格「画」出来 */
+@keyframes ghBeadIn {
+  from { opacity: 0; transform: scale(.55); }
+  to { opacity: 1; transform: scale(1); }
+}
+/* 画完之后，沿外圈跑一圈金色高光（每格 delay 错开 ⇒ 看起来像绕着轮廓跑） */
+@keyframes ghOutline {
+  from { box-shadow: 0 0 0 0 rgba(240, 200, 75, 0); }
+  50% { box-shadow: 0 0 0 3px rgba(240, 200, 75, .55); }
+  to { box-shadow: 0 0 0 0 rgba(240, 200, 75, 0); }
+}
+/* 整个循环：大部分时间显示，末尾淡出 ⇒ 配合组件重建 DOM 实现「重新摆爱心」 */
+@keyframes ghReplay {
+  0%, 88% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.generating-heart-label {
+  font-size: 13px;
+  letter-spacing: .3px;
+}
+.generating-heart-label .dots::after {
+  content: '';
+  animation: ghDots 1.4s steps(4, end) infinite;
+}
+@keyframes ghDots {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75%, 100% { content: '...'; }
+}
 
+/* 画布上的遮罩：只盖住工作台，不挡左栏操作 */
+.workspace-generating {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: rgba(244, 242, 237, .82);
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(1px);
+  animation: ghVeilIn 260ms ease both;
+}
+@keyframes ghVeilIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.workspace-generating .generating-heart-grid { --gh-cell: 18px; }
+
+/* 无障碍：开了「减少动态效果」就不逐格演、不心跳，直接静态显示完整心形 */
+@media (prefers-reduced-motion: reduce) {
+  .generating-heart-bead {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+  .generating-heart-beat { animation: none; }
+  .generating-heart-label .dots::after { content: '...'; animation: none; }
+  .workspace-generating { animation: none; }
+}

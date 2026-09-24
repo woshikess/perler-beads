@@ -2702,7 +2702,9 @@ export default function App() {
                 setTool('pencil');
                 closeAllToolOptions();
                 setNotice(language === 'zh' ? '已从画布拾取颜色。' : 'Color picked from canvas.');
-            }, onHover: setHoverCell, fitLabel: text.fit, canEdit: !activeLayer.locked, lockedHint: text.lockedCanvasHint, 
+            }, onHover: setHoverCell, fitLabel: text.fit, canEdit: !activeLayer.locked, 
+            // B36：出图 / AI 生成期间在工作台上盖一层「正在生成图案」的心形动画
+            isGenerating: isGenerating, generatingLabel: text.preparingPattern, lockedHint: text.lockedCanvasHint, 
             // 第 3 批：画布尺寸徽标顺带报总颗数；面板开合也改成受控（状态在本文件里）。
             totalBeads: totalBeads, beadUnit: language === 'zh' ? '颗' : 'beads', openPanel: openPanel, setOpenPanel: setOpenPanel, panelLayout: panelLayout, 
             // ── B9（用户第 8 条）：画布右上角的「当前色圆点」入口。
