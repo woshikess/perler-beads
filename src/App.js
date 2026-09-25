@@ -1,6 +1,7 @@
 import WorkspaceCanvas from './WorkspaceCanvas.js';
 import ThreePreview from './ThreePreview.js';
-import { AI_REDRAW_TIMEOUT_MS, ARK_ENDPOINT, buildPrompt, calcSize } from './arkDirect.js';
+import { AI_REDRAW_TIMEOUT_MS, buildPrompt, calcSize } from './arkDirect.js';
+import { DEFAULT_ARK_TIER, arkImagesEndpoint, isArkTier, orderArkTiers, } from './arkEndpoints.js';
 import { ARK_LINKS, ARK_MODEL_CANDIDATES, detectActivatedModel, formatRawBits } from './arkDiagnostics.js';
 import { downloadPrintPdf, downloadPrintPng, downloadProjectJson, downloadUsageWorkbook } from './exporters.js';
 import { imageFileToBeads } from './imageToBeads.js';
@@ -97,6 +98,37 @@ const sizePresets = [
     { label: '104 * 104', width: 104, height: 104 },
     { label: '156 * 156', width: 156, height: 156 },
 ];
+/**
+ * B45：**AI 出图的风格档位**（AI 卡片里的「出图风格」）。
+ *
+ * 两档，用户 2026-09-25 拍板：
+ *   - `'q-chibi'` ＝Q 版像素风＝**现行线上那版提示词**（逐字节不变）
+ *   - `'detail'`  ＝精致写实风＝第 B45 批实测出来的「hi-bit 精细像素插画」
+ *
+ * 为什么从 B43 的"四个格数档"改成"两个风格档"：实测发现模型**只分得清"扁平符号化"与"自然比例"
+ * 这两族**，而 16 位 / GBA / hi-bit 这类"世代词"在同一族里画不出可分辨的差别
+ * （B43 的四档里有两档完全分不开，B44 的四档世代词也只分出两档）。
+ * 详见 `_审核\_暂存证据\第B45批-风格分档调研与四风格对比\报告.md`。
+ *
+ * ⚠️ 这一行与左栏「参数调节 → 宽度」**依旧没有任何联系**（解耦是用户明确要求的，B43 起就成立）。
+ *
+ * 实测依据（第 B45 批，两张素材 × 四个格数，格式＝色块数 / 孤立点占比）：
+ *
+ *   格数    Q 版像素风（q-chibi）        精致写实风（detail）
+ *   52     165 / 3.2%  ← 最干净         360 / 6.7%   ← 碎
+ *   78     224 / 1.7%  ← 最干净         602 / 4.9%
+ *   104    317 / 1.4%                   835 / 3.4%   ← 细节 2.6 倍
+ *   156    554 / 1.0%（但一像素眼被画成黑条，显简陋）  1468 / 2.6%  ← 细节最多、最像本人
+ *
+ * ⇒ 交叉点在 78 与 104 之间：**小盘子用 Q 版、大盘子用精致写实**。
+ *   精致写实风在小格数上会碎，所以界面上要提示用户"需要大盘子"（见 `aiStyleDetailHint`）。
+ */
+const AI_STYLE_OPTIONS = [
+    { tier: 'q-chibi', labelKey: 'aiStyleQ' },
+    { tier: 'detail', labelKey: 'aiStyleDetail' },
+];
+/** 「精致写实风」建议的最小拼豆板宽度。低于它就弹提示（实测：52/78 上会碎） */
+const DETAIL_STYLE_MIN_BOARD = 156;
 const defaultImportSettings = {
     width: 52,
     maxColors: 24,
@@ -285,8 +317,28 @@ export default function App() {
     const [aiApiKey, setAiApiKey] = useState(() => localStorage.getItem('ark-api-key') ?? '');
     // 模型 ID：不同账号开通的模型可能不一样，粘贴 Key 后程序会自动识别并填好
     const [aiModel, setAiModel] = useState(() => localStorage.getItem('ark-model') ?? DEFAULT_AI_MODEL);
+    /**
+     * B44：**这把 Key 属于哪一档订阅**（按量 / Agent Plan / Coding Plan）。
+     *
+     * 三档的基础地址不同、Key 不通用，而 Key 的字符串格式一模一样 ⇒ 只能靠零费用探针问出来。
+     * 识别成功后记在这里（并落到 localStorage），发请求时用对应档位的地址。
+     * 用户完全不需要知道这件事：粘贴 Key → 自动识别 → 直接用。
+     */
+    const [aiArkTier, setAiArkTier] = useState(() => {
+        const saved = localStorage.getItem('ark-tier');
+        return isArkTier(saved) ? saved : DEFAULT_ARK_TIER;
+    });
     // 模型设置默认收起，需要时点开
     const [aiModelOpen, setAiModelOpen] = useState(false);
+    /**
+     * B45：AI 卡片里的「出图风格」—— **独立状态，与「参数调节 → 宽度」无关**。
+     * 它只决定一件事：发给方舟的提示词用哪一套（`buildPrompt(bg, aiStyle)`）。
+     * 默认 `'q-chibi'` ＝现行线上那版提示词。
+     */
+    const [aiStyle, setAiStyle] = useState(() => {
+        const saved = localStorage.getItem('ark-ai-style');
+        return saved === 'detail' ? 'detail' : 'q-chibi';
+    });
     // 自动识别模型：状态 + 「当前这个模型 ID 是不是自动识别填进去的」
     const [arkDetect, setArkDetect] = useState({ phase: 'idle' });
     const [aiModelAuto, setAiModelAuto] = useState(false);
@@ -628,12 +680,21 @@ export default function App() {
         if (!looksLikeArkKey(key))
             return;
         setArkDetect((current) => (current.phase === 'running' ? current : { phase: 'running' }));
-        const result = await detectActivatedModel(key);
+        // 把"上次成功的档位"排在探测顺序最前面，省掉无用往返（用错档位时每次要多一次探针）
+        const result = await detectActivatedModel(key, undefined, { preferredTier: aiArkTier });
         setArkDetect({ phase: 'done', key, result });
         if (result.kind === 'found') {
             setAiModel(result.modelId);
             setAiModelAuto(true);
             localStorage.setItem('ark-model', result.modelId);
+            // 档位也跟着落盘：下次直接用它，用户什么都不用管
+            setAiArkTier(result.tier);
+            localStorage.setItem('ark-tier', result.tier);
+        }
+        else if (result.kind === 'none') {
+            // 档位已经确定（能读到"模型层"错误就说明这个档位认了这把 Key），同样记下来
+            setAiArkTier(result.tier);
+            localStorage.setItem('ark-tier', result.tier);
         }
     }
     useEffect(() => {
@@ -1474,10 +1535,10 @@ export default function App() {
             bytes[i] = bin.charCodeAt(i);
         return new File([bytes], fileName, { type: mime });
     }
-    /** 直连火山方舟，得到 Q 版像素画（返回新的 File 和缩略图 data URL）
+    /** 直连火山方舟，得到像素画（返回新的 File 和缩略图 data URL）
      *  纯静态部署（GitHub Pages）下没有本地代理，所以浏览器直接调方舟：
      *  方舟对任意 Origin 都回跨域头，预检允许 authorization,content-type。 */
-    async function runAiRedraw(file, modelId) {
+    async function runAiRedraw(file, modelId, style) {
         const dataUrl = await readFileAsDataUrl(file);
         const dims = await new Promise((resolve) => {
             const img = new Image();
@@ -1489,46 +1550,110 @@ export default function App() {
         // 方舟一次生成要 27~107 秒，所以给足超时；超时要能主动中断，不能让界面一直转
         const controller = new AbortController();
         const timer = window.setTimeout(() => controller.abort(), AI_REDRAW_TIMEOUT_MS);
-        let resp;
-        try {
-            resp = await fetch(ARK_ENDPOINT, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${aiApiKey.trim()}`,
-                },
-                body: JSON.stringify({
-                    model: modelId,
-                    prompt: buildPrompt(backgroundMode),
-                    image: dataUrl,
-                    size: `${W}x${H}`,
-                    watermark: false,
-                    response_format: 'b64_json',
-                }),
-                signal: controller.signal,
-            });
-        }
-        catch (error) {
-            if (error instanceof DOMException && error.name === 'AbortError') {
-                throw new Error(`AI 重绘超时（已等待 ${Math.round(AI_REDRAW_TIMEOUT_MS / 1000)} 秒）。`
-                    + '方舟一次生成通常 30~110 秒，超时说明网络太慢或服务繁忙，稍后重试即可（这次没有拿到图片）。');
+        /**
+         * B44：**按订阅档位发请求，发错档位就自动换一档**。
+         *
+         * 三档（按量 / Agent Plan / Coding Plan）基础地址不同、Key 不通用，用错档位恒 401。
+         * 先用「识别出来的那一档」；失败就按顺序换其它档位各试一次，成功后把档位记下来。
+         *
+         * 判据必须是两类：
+         *   ① HTTP 401 / 403（方舟带跨域头时能读到状态码）；
+         *   ② **网络层异常** —— 方舟的 401 **不带跨域头**，浏览器里只能拿到 TypeError，
+         *      所以"连不上"同样可能是档位不对，必须一起换档重试。
+         * 这两类都意味着**图根本没生成**，所以换档重试不会重复扣费。
+         * 超时（AbortError）不换档：那说明服务已经收下请求在画了，换档只会再花一次钱。
+         */
+        let resp = null;
+        let usedTier = aiArkTier;
+        let lastNetworkError = null;
+        /** 有没有哪一档**读到了 HTTP 响应**（读到了 ⇒ 网络是通的，问题在 Key 或跨域策略上） */
+        let sawHttpStatus = null;
+        /** 哪些档位是"连响应都没读到"的（浏览器里套餐档就长这样） */
+        const blockedTiers = [];
+        const tierOrder = orderArkTiers(aiArkTier);
+        for (let attempt = 0; attempt < tierOrder.length; attempt += 1) {
+            const tier = tierOrder[attempt];
+            try {
+                const candidate = await fetch(arkImagesEndpoint(tier), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${aiApiKey.trim()}`,
+                    },
+                    body: JSON.stringify({
+                        model: modelId,
+                        prompt: buildPrompt(backgroundMode, style),
+                        image: dataUrl,
+                        size: `${W}x${H}`,
+                        watermark: false,
+                        response_format: 'b64_json',
+                    }),
+                    signal: controller.signal,
+                });
+                // 这一档不认这把 Key ⇒ 换下一档（图没生成，不花钱）
+                if (candidate.status === 401 || candidate.status === 403) {
+                    sawHttpStatus = candidate.status;
+                    lastNetworkError = new Error(`HTTP ${candidate.status}`);
+                    continue;
+                }
+                resp = candidate;
+                usedTier = tier;
+                break;
             }
-            // 网络层就失败了。注意：方舟在 Key 无效时返回的 401 不带跨域头，
-            // 浏览器读不到响应，同样只能报成网络错误 —— 所以这里必须提醒检查 Key。
-            const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-            throw new Error('连不上火山方舟；如果 Key 填错也会表现成这样，请检查 Key（ark- 开头，控制台重新复制一个）。'
-                + `另外确认网络能访问 ark.cn-beijing.volces.com。原始错误：${raw}`);
+            catch (error) {
+                if (error instanceof DOMException && error.name === 'AbortError') {
+                    window.clearTimeout(timer);
+                    throw new Error(`AI 重绘超时（已等待 ${Math.round(AI_REDRAW_TIMEOUT_MS / 1000)} 秒）。`
+                        + '方舟一次生成通常 30~110 秒，超时说明网络太慢或服务繁忙，稍后重试即可（这次没有拿到图片）。');
+                }
+                // 网络层失败：可能是档位不对（浏览器拿不到跨域头时就长这样），换下一档再试
+                blockedTiers.push(tier);
+                lastNetworkError = error;
+                continue;
+            }
         }
-        finally {
+        // 三档都试过还是没拿到响应 ⇒ 报错。这时有两种完全不同的情况，必须分开说，不能笼统说"Key 不对"。
+        if (!resp) {
             window.clearTimeout(timer);
+            const raw = lastNetworkError instanceof Error
+                ? `${lastNetworkError.name}: ${lastNetworkError.message}`
+                : String(lastNetworkError);
+            // 情况一：至少有一档**读到了** HTTP 401 ⇒ 网络是通的，是 Key 不被接受。
+            //        而套餐档读不到响应是**方舟服务端的跨域配置**造成的（实测证据见下），不是用户的问题。
+            //        实测原文（Chrome 控制台）：
+            //        「Request header field authorization is not allowed by Access-Control-Allow-Headers in preflight response.」
+            //        —— /api/plan/v3 的预检只放行 Origin,Content-Length,Content-Type，**不放行 authorization**，
+            //        所以纯浏览器（本站是静态站、没有自己的后端）**无法调用套餐接口**。
+            //        匿名、查询串、自定义头三种替代通道都实测过，一律 401（只有 authorization 头被接受）。
+            if (sawHttpStatus !== null) {
+                throw new Error(`这把 API Key 不被接受（HTTP ${sawHttpStatus}）。`
+                    + (blockedTiers.length
+                        ? '另外，方舟的**套餐接口（Agent Plan / Coding Plan）不允许网页直接调用** —— '
+                            + '它的跨域配置不放行 authorization 头，浏览器在预检阶段就被拦下，所以纯网页应用用不了套餐 Key。'
+                        : '')
+                    + '请到火山方舟控制台重新复制一个「**按量计费**」的 API Key（ark- 开头）。'
+                    + `（已试过：${tierOrder.map((t) => text.arkTierName(t)).join(' / ')}）`);
+            }
+            // 情况二：一档都没读到响应 ⇒ 网络不通 / Key 完全无法鉴权，两种都要提醒
+            throw new Error('连不上火山方舟（三种订阅档位都试过了：'
+                + tierOrder.map((t) => text.arkTierName(t)).join(' / ')
+                + '）。如果 Key 填错、或者网络到不了 ark.cn-beijing.volces.com，都会表现成这样；'
+                + '请检查 Key（ark- 开头，控制台重新复制一个）与网络。'
+                + `原始错误：${raw}`);
         }
-        const text = await resp.text();
+        // 换档成功 ⇒ 记住这一档，下次直接用它（用户什么都不用管）
+        if (usedTier !== aiArkTier) {
+            setAiArkTier(usedTier);
+            localStorage.setItem('ark-tier', usedTier);
+        }
+        window.clearTimeout(timer);
+        const bodyText = await resp.text();
         let json = null;
         try {
-            json = JSON.parse(text);
+            json = JSON.parse(bodyText);
         }
         catch (error) {
-            throw new Error(`AI 服务返回了无法解析的内容（HTTP ${resp.status}）：${text.slice(0, 300)}`);
+            throw new Error(`AI 服务返回了无法解析的内容（HTTP ${resp.status}）：${bodyText.slice(0, 300)}`);
         }
         if (!resp.ok || json.error) {
             const message = json?.error?.message || json?.message || `AI 服务返回 HTTP ${resp.status}`;
@@ -1647,14 +1772,17 @@ export default function App() {
                 setNotice(text.aiRedrawRunning);
                 setNoticeIsError(false);
                 try {
-                    const redrawn = await runAiRedraw(pendingFile, (options.model ?? aiModel).trim() || DEFAULT_AI_MODEL);
+                    const redrawn = await runAiRedraw(pendingFile, (options.model ?? aiModel).trim() || DEFAULT_AI_MODEL, aiStyle);
                     sourceFile = redrawn.file;
                     fromAi = true;
                     setAiResultUrl(redrawn.url);
                     setAiResultSourceFile(pendingFile);
                     // 追加进历史，成为新的「当前图源」，同时把 AI 图设为参考图
                     setAiHistory((items) => {
-                        const next = [...items, { file: redrawn.file, url: redrawn.url, bg: backgroundMode }];
+                        // B45：把「生成这张 AI 图时用的是哪种风格」记进历史 —— 缩略图角标据此显示。
+                        // 注意它是 **aiStyle**（AI 卡片的风格），不是 `convertWidth`（参数调节的宽度）：
+                        // 两者已解耦，角标要比的是"这张图当时按哪种风格画的"。
+                        const next = [...items, { file: redrawn.file, url: redrawn.url, bg: backgroundMode, style: aiStyle }];
                         return next.slice(-AI_HISTORY_LIMIT);
                     });
                     setAiHistoryIndex((current) => {
@@ -1695,6 +1823,10 @@ export default function App() {
                 backgroundColor: [255, 255, 255],
                 tolerance,
                 speckleReduction: defaultImportSettings.speckleReduction,
+                // B46 的「自动定降噪档」与「孤岛归并」**都已整体删除**（用户决定，2026-09-25）：
+                //   孤岛归并会吞掉深色孤豆（瞳孔/鼻孔/嘴线）；自动档的触发阈值 1.1% 无产物支撑，
+                //   实测会把真像素画判成脏源（宽 104 上干净 1.40% > 脏 1.19%）。
+                //   不要再加回来。决策与数据：`_审核\_暂存证据\第B46批-降噪方案对比\报告.md` 第七节。
                 // 用户手动拖过容差之后就不再自动校准；否则让工具自己算一个合适值
                 calibrateTolerance: !toleranceManual,
                 // 只有「AI 图 → 图纸」这一步才保护眼睛高光：
@@ -2435,41 +2567,48 @@ export default function App() {
                         React.createElement("div", null,
                             React.createElement("strong", { className: "field-label-with-help" },
                                 text.aiRedrawTitle,
-                                React.createElement("span", { className: "help-dot image-help-dot", ...imageHelpProps(text.aiRedrawHint) }, "?"))),
+                                React.createElement("span", { className: "help-dot image-help-dot", ...imageHelpProps(`${text.aiRedrawHint}\n\n${text.aiStyleHint(DETAIL_STYLE_MIN_BOARD)}`) }, "?"))),
                         React.createElement("small", { className: "ai-redraw-cost" }, text.aiRedrawCost)),
-                    React.createElement("div", { className: "ai-redraw-row" },
-                        aiResultUrl ? (React.createElement("img", { className: "ai-redraw-thumb", src: aiResultUrl, alt: "" })) : (React.createElement("span", { className: "ai-redraw-thumb is-empty", "aria-hidden": "true" })),
-                        React.createElement("label", { className: "stacked-field ai-redraw-bg-field" },
-                            React.createElement("span", null, text.aiBackground),
-                            React.createElement("select", { "aria-label": "AI background handling", value: backgroundMode, onChange: (event) => setBackgroundMode(event.target.value) },
-                                React.createElement("option", { value: "keep" }, text.keepBackground),
-                                React.createElement("option", { value: "remove-white" }, text.removeWhite))),
-                        React.createElement("label", { className: "stacked-field ai-redraw-key" },
-                            React.createElement("span", null, text.aiRedrawKeyLabel),
-                            React.createElement("input", { type: "password", value: aiApiKey, placeholder: text.aiRedrawKeyPlaceholder, onChange: (event) => {
-                                    const value = event.target.value;
-                                    setAiApiKey(value);
-                                    localStorage.setItem('ark-api-key', value);
-                                } }))),
+                    React.createElement("label", { className: "ai-field-row" },
+                        React.createElement("span", null, text.aiStyleLabel),
+                        React.createElement("select", { "aria-label": "AI art style", value: aiStyle, onChange: (event) => {
+                                const next = event.target.value === 'detail' ? 'detail' : 'q-chibi';
+                                setAiStyle(next);
+                                localStorage.setItem('ark-ai-style', next);
+                            } }, AI_STYLE_OPTIONS.map((option) => (React.createElement("option", { key: option.tier, value: option.tier }, text[option.labelKey]))))),
+                    React.createElement("label", { className: "ai-field-row" },
+                        React.createElement("span", null, text.aiBackground),
+                        React.createElement("select", { "aria-label": "AI background handling", value: backgroundMode, onChange: (event) => setBackgroundMode(event.target.value) },
+                            React.createElement("option", { value: "keep" }, text.keepBackground),
+                            React.createElement("option", { value: "remove-white" }, text.removeWhite))),
+                    React.createElement("label", { className: "ai-field-row ai-field-row--key" },
+                        React.createElement("span", null, text.aiRedrawKeyLabel),
+                        React.createElement("input", { type: "password", value: aiApiKey, placeholder: text.aiRedrawKeyPlaceholder, onChange: (event) => {
+                                const value = event.target.value;
+                                setAiApiKey(value);
+                                localStorage.setItem('ark-api-key', value);
+                            } })),
                     React.createElement("div", { className: `ai-detect is-${arkDetect.phase === 'running' ? 'running' : arkDetect.phase === 'done' && arkDetect.result.kind === 'found' ? 'ok' : 'warn'}` },
                         React.createElement("p", { className: "ai-detect-status" },
                             arkDetect.phase === 'running' && text.arkDetectRunning,
                             arkDetect.phase === 'done' && arkDetect.result.kind === 'found'
-                                && `${text.arkDetectFound}${arkDetect.result.modelId}${text.arkDetectFoundTail}`,
-                            arkDetect.phase === 'done' && arkDetect.result.kind !== 'found'
-                                && arkDetect.result.probes[arkDetect.result.probes.length - 1]?.status === 'model-not-found'
-                                && text.arkDetectNotFound,
-                            arkDetect.phase === 'done' && arkDetect.result.kind !== 'found'
+                                && `${text.arkDetectFound}${arkDetect.result.modelId}${text.arkDetectFoundTail}`
+                                    + `　·　${text.arkTierName(arkDetect.result.tier)}`,
+                            arkDetect.phase === 'done' && arkDetect.result.kind === 'none'
                                 && arkDetect.result.probes[arkDetect.result.probes.length - 1]?.status === 'model-not-open'
-                                && text.arkDetectNotOpen,
-                            arkDetect.phase === 'done' && arkDetect.result.kind !== 'found'
+                                && `${text.arkDetectNotOpen}　·　${text.arkTierName(arkDetect.result.tier)}`,
+                            arkDetect.phase === 'done' && arkDetect.result.kind === 'none'
+                                && arkDetect.result.probes[arkDetect.result.probes.length - 1]?.status === 'model-not-found'
+                                && `${text.arkDetectNotFound}　·　${text.arkTierName(arkDetect.result.tier)}`,
+                            arkDetect.phase === 'done' && arkDetect.result.kind === 'none'
                                 && !['model-not-found', 'model-not-open'].includes(String(arkDetect.result.probes[arkDetect.result.probes.length - 1]?.status))
-                                && text.arkDetectBadKey,
+                                && text.arkDetectNotOpen,
+                            arkDetect.phase === 'done' && arkDetect.result.kind === 'error' && text.arkDetectBadKey,
                             arkDetect.phase === 'idle' && (looksLikeArkKey(aiApiKey) ? text.arkDetectHint : text.arkDetectNeedKey)),
                         React.createElement("div", { className: "ai-detect-row" },
                             React.createElement("button", { type: "button", className: "ai-detect-retry", disabled: arkDetect.phase === 'running' || !looksLikeArkKey(aiApiKey), onClick: () => { void runArkDetect(aiApiKey); } }, text.arkDetectRetry),
                             arkStatusLink && (React.createElement("a", { className: "ai-detect-link", href: ARK_LINKS[arkStatusLink], target: "_blank", rel: "noreferrer" }, arkStatusLink === 'apiKey' ? text.arkDetectGetKey : text.arkDetectGetModel))),
-                        arkDetect.phase === 'done' && arkDetect.result.kind === 'error' && (React.createElement("small", { className: "ai-detect-raw" }, formatRawBits(arkDetect.result.probes[arkDetect.result.probes.length - 1].raw))),
+                        arkDetect.phase === 'done' && arkDetect.result.kind === 'error' && (React.createElement("small", { className: "ai-detect-raw" }, arkDetect.result.detail || formatRawBits(arkDetect.result.probes[arkDetect.result.probes.length - 1].raw))),
                         arkSuggestLine && React.createElement("small", { className: "ai-detect-raw" }, arkSuggestLine)),
                     React.createElement("div", { className: "ai-model-block is-always" },
                         React.createElement("div", { className: "ai-model-head" },
@@ -2487,15 +2626,18 @@ export default function App() {
                             } }),
                         React.createElement("datalist", { id: "ark-model-presets" }, ARK_MODEL_CANDIDATES.map((m) => React.createElement("option", { key: m, value: m }))),
                         aiModelOpen && React.createElement("small", null, text.aiModelHint)),
-                    aiHistory.length > 0 && (React.createElement("div", { className: "ai-history" },
-                        React.createElement("span", { className: "ai-history-label" },
-                            React.createElement("em", null, aiHistory.length),
-                            text.aiHistoryLabel),
-                        React.createElement("div", { className: "ai-history-strip" }, aiHistory.map((item, index) => (React.createElement("button", { key: index, type: "button", className: `ai-history-item${index === aiHistoryIndex ? ' active' : ''}${item.isOriginal ? ' is-original' : ''}`, title: item.isOriginal
-                                ? text.aiHistoryOriginal
-                                : `${text.aiHistoryTitle} ${index} · ${item.bg === 'keep' ? text.keepBackground : text.removeWhite}`, disabled: aiRedrawing || isGenerating, onClick: () => selectHistoryEntry(index) },
-                            React.createElement("img", { src: item.url, alt: item.isOriginal ? text.aiHistoryOriginal : `${index}` }),
-                            React.createElement("span", { className: "ai-history-no" }, item.isOriginal ? text.aiHistoryOriginalShort : index))))))),
+                    React.createElement("div", { className: "ai-source-row" },
+                        aiResultUrl ? (React.createElement("img", { className: "ai-redraw-thumb", src: aiResultUrl, alt: "" })) : (React.createElement("span", { className: "ai-redraw-thumb is-empty", "aria-hidden": "true" })),
+                        aiHistory.length > 0 && (React.createElement("div", { className: "ai-history" },
+                            React.createElement("span", { className: "ai-history-label" },
+                                React.createElement("em", null, aiHistory.length),
+                                text.aiHistoryLabel),
+                            React.createElement("div", { className: "ai-history-strip" }, aiHistory.map((item, index) => (React.createElement("button", { key: index, type: "button", className: `ai-history-item${index === aiHistoryIndex ? ' active' : ''}${item.isOriginal ? ' is-original' : ''}`, title: item.isOriginal
+                                    ? text.aiHistoryOriginal
+                                    : `${text.aiHistoryTitle} ${index} · ${item.bg === 'keep' ? text.keepBackground : text.removeWhite}`, disabled: aiRedrawing || isGenerating, onClick: () => selectHistoryEntry(index) },
+                                React.createElement("img", { src: item.url, alt: item.isOriginal ? text.aiHistoryOriginal : `${index}` }),
+                                !item.isOriginal && item.style != null && (React.createElement("span", { className: `ai-history-w${item.style !== aiStyle ? ' is-stale' : ''}`, title: `${text.aiStyleBadge(item.style)}${item.style !== aiStyle ? ` · ${text.aiStyleStale}（${text.aiStyleBadge(aiStyle)}）` : ''}` }, text.aiStyleBadge(item.style))),
+                                React.createElement("span", { className: "ai-history-no" }, item.isOriginal ? text.aiHistoryOriginalShort : index)))))))),
                     aiRedrawing && (React.createElement("div", { className: "ai-redraw-progress" },
                         React.createElement("span", { className: "ai-redraw-spinner" }),
                         React.createElement("strong", null, text.aiRedrawRunning))),
@@ -2503,8 +2645,8 @@ export default function App() {
                         React.createElement("button", { type: "button", className: "ai-redraw-start", disabled: !pendingFile || aiRedrawing || isGenerating, onClick: () => void generateFromImage({ recordHistory: true, forceAiRedraw: true }), title: text.aiRedrawCost }, aiRedrawing
                             ? text.aiRedrawRunning
                             : aiHistory.length > 1
-                                ? text.aiRedrawRegenerate
-                                : text.aiRedrawStart))),
+                                ? text.aiRedrawRegenerate(text.aiStyleName(aiStyle))
+                                : text.aiRedrawStart(text.aiStyleName(aiStyle))))),
                 !panelLayout && paramsCardNode)),
             (!panelLayout || leftSection === 'reference') && (React.createElement("section", { className: "left-card reference-card" },
                 React.createElement("div", { className: "left-card-header" },

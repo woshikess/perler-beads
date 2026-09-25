@@ -4841,6 +4841,101 @@ button:focus-visible {
   flex-direction: column;
   gap: 6px;
 }
+
+/* ============================================================================
+   B43：AI 卡片**三行统一字段** + 「拼豆板」档位
+   ----------------------------------------------------------------------------
+   三行（拼豆板 / AI 图的背景 / API Key）统一成同一套排布：**标签在左、控件在右**，
+   行距一致、字号一致 —— 这是用户点名要的「均匀排布、美观、统一」。
+   （改动前是「缩略图 + 背景 + Key」挤在一行的 `.ai-redraw-row`，标签在上、参差不齐。）
+
+   「拼豆板」这一行控制的是 **AI 出图的精细度档位**（不是本地出图格数）：
+   52 → 现在这套粗粒度提示词；更大的板子 → 提示词里的像素网格跟着变细。
+   映射在 App.tsx 的 `AI_DETAIL_BY_BOARD`，粒度文本在 `arkDirect.ts` 的 `AiDetailTier`。
+
+   ⚠️ 三端共用同一段 JSX（`.left-panel` 在抽屉档按 `data-left-section` 分区、桌面档常显）
+      ⇒ 本规则与断点无关。
+   ============================================================================ */
+.ai-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--font-size-small);
+  color: #555;
+}
+
+/* 下拉固定宽度（三行里两个都是下拉，宽度一致才"齐"）；输入框吃掉剩余宽度。
+   B45：118 → 150px。因为「出图风格」的选项名要自带适用范围（「精致写实风（大图用）」），
+   118px 装不下会被截断。三行一起加宽以保持"齐"；实测桌面卡片 269px 装得下「AI 图的背景 + 150px」。 */
+.ai-field-row select {
+  flex: 0 0 auto;
+  width: 150px;
+  min-height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: #111827;
+  font-size: var(--font-size-small);
+}
+
+/* B45：触屏档的字号被下面的「iOS 防缩放」规则抬到 ≥16px（`.app-shell select { font-size: max(16px,1em) }`），
+   于是同一句「精致写实风 · 大板」在 16px 下要 **124px**，而 150px 的下拉扣掉内边距与箭头只剩 **118px**
+   ⇒ **会被截断**（三端实测抓到：桌面 12px 只需 93px 装得下，iPad/手机 16px 需要 124px 装不下）。
+   所以触屏档把下拉加宽到 160px（可用 130px）。三行仍然等宽，卡片高度不受影响。 */
+@media (pointer: coarse) {
+  .ai-field-row select {
+    width: 160px;
+  }
+}
+
+.ai-field-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: #111827;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: var(--font-size-caption);
+}
+
+/* 当前 AI 结果缩略图 + 图源历史，并作一行（与预览稿一致） */
+.ai-source-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.ai-source-row > .ai-history {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* B43：AI 缩略图左上角的「按哪个档位生成」角标。
+   与右下角的 `.ai-history-no`（序号）分居两角、互不遮挡；缩略图只有 34px 高，不做第三块。 */
+.ai-history-w {
+  position: absolute;
+  left: 1px;
+  top: 1px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: rgba(54, 119, 210, 0.92);
+  color: #fff;
+  font-size: var(--font-size-caption);
+  font-weight: var(--weight-semibold);
+  line-height: 12px;
+}
+
+/* 与当前档位不一致 ⇒ 变红。**只做展示、不可点** ——
+   整个界面里只有 `.ai-redraw-start` 会真的产生费用，小角标误触就扣费不值得。 */
+.ai-history-w.is-stale {
+  background: #c0392b;
+}
+
 .ai-redraw-start {
   width: 100%;
   padding: 9px 14px;

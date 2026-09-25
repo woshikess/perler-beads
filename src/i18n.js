@@ -58,8 +58,28 @@ export const ui = {
         imageToPattern: '导入图片生成',
         aiRedrawTitle: 'AI 生成',
         aiRedrawCost: '约 0.3-0.6 元/张',
-        aiRedrawStart: '开始生成',
-        aiRedrawRegenerate: '重新生成',
+        // B43：按钮上直接带出「图纸宽度」这一档 —— 用户改了宽度，按钮文字自己就变，
+        // 于是"宽度会影响 AI 出图"这层关系由控件自己暴露，不需要任何说明文字。
+        aiRedrawStart: (style) => `生成 ${style} 图纸`,
+        aiRedrawRegenerate: (style) => `重新生成 ${style} 图纸`,
+        /** B45：出图风格（两档）—— 决定发给 AI 的提示词用哪一套。
+         *  适用范围直接写在选项名里（B45 定稿）：下拉一打开就先看到「小图用 / 大图用」，
+         *  不用等选完再吃一条警告；完整理由放在卡片标题那个「?」里（见 aiStyleHint）。 */
+        aiStyleLabel: '出图风格',
+        /* ⚠️ 括号后缀别写长：下拉框 150px 宽，12px 字，扣掉内边距和箭头只剩约 120px ——
+           实测「精致写实风（大图用）」是 125px，**会被截断成「精致写实风（大图」**（截图抓到过）。
+           「精致写实风 · 大板」约 103px，留 17px 余量。改动后请跑 verify_style_switch.cjs 的"文字实际宽度"断言。 */
+        aiStyleQ: 'Q 版像素风 · 小板',
+        aiStyleDetail: '精致写实风 · 大板',
+        /** 按钮/角标上用的短名（不带括号后缀） */
+        aiStyleName: (tier) => (tier === 'detail' ? '精致写实风' : 'Q 版像素风'),
+        aiStyleBadge: (tier) => (tier === 'detail' ? '精致' : 'Q版'),
+        aiStyleStale: '与当前风格不一致',
+        /** 卡片标题「?」里的完整说明（拼在原有的 AI 重绘说明后面） */
+        aiStyleHint: (board) => `两档出图风格怎么选：\n`
+            + `· Q 版像素风 —— 现行版提示词。头大、纯平色、粗描边，在 52 / 78 格的小板子上最干净（实测孤立点最低）。\n`
+            + `· 精致写实风 —— 更多色阶、更大的眼睛像素预算、发绺与衣褶分组。在 ${board} 及以上的大板子上最精致，也更像照片本人；\n`
+            + `  在 52 / 78 的小板子上会又碎又糊（实测孤立点 5~11%），所以建议用大板子或者多张拼接。`,
         aiHistoryLabel: '图源历史',
         aiHistoryTitle: 'AI 图',
         aiHistoryOriginal: '原图',
@@ -81,6 +101,10 @@ export const ui = {
         arkDetectNotOpen: '识别到模型，但账号都还没开通',
         arkDetectNotFound: '没找到可用模型（候选列表可能过时了）',
         arkDetectBadKey: '连不上：最可能是 Key 不对',
+        /** 订阅档位名（三档基础地址不同、Key 不通用；用户不需要知道，只在识别结果里显示） */
+        arkTierName: (tier) => tier === 'agent-plan' ? 'Agent Plan 套餐'
+            : tier === 'coding-plan' ? 'Coding Plan 套餐'
+                : '按量计费',
         arkDetectNeedKey: '粘贴 Key 后会自动识别可用模型',
         arkDetectHint: 'Key 看着完整，点「重新识别」试一次',
         arkDetectRetry: '重新识别',
@@ -374,8 +398,20 @@ export const ui = {
         imageToPattern: 'Import Image',
         aiRedrawTitle: 'AI Generate',
         aiRedrawCost: '~¥0.3-0.6 / image',
-        aiRedrawStart: 'Start',
-        aiRedrawRegenerate: 'Regenerate',
+        // B43：the button carries the target pattern width, so changing the width
+        // visibly changes the button text — the link needs no explanatory copy.
+        aiRedrawStart: (style) => `Generate a ${style} pattern`,
+        aiRedrawRegenerate: (style) => `Regenerate the ${style} pattern`,
+        aiStyleLabel: 'Art style',
+        aiStyleQ: 'Q-style (small)',
+        aiStyleDetail: 'Detailed (large)',
+        aiStyleName: (tier) => (tier === 'detail' ? 'detailed' : 'Q-style'),
+        aiStyleBadge: (tier) => (tier === 'detail' ? 'Detail' : 'Q'),
+        aiStyleStale: 'differs from the current style',
+        aiStyleHint: (board) => `Which style to pick:\n`
+            + `· Q-style pixel art - the current prompt. Big head, flat colours, thick outline; cleanest on small boards (52 / 78).\n`
+            + `· Detailed style - more colour steps, a larger eye budget, grouped hair and cloth folds. Finest on a ${board}-wide board or larger,\n`
+            + `  and it looks more like the person in the photo; on a 52 / 78 board it looks mushy, so use a large board or stitch several together.`,
         aiBackground: 'AI art background',
         aiModelLabel: 'Model',
         aiModelHint: 'Default is doubao-seedream-5-0-pro-260628. If you get "ModelNotOpen", activate that model in the Ark console, or type a model ID your account has activated.',
@@ -397,6 +433,9 @@ export const ui = {
         arkDetectNotOpen: 'Models found, but none is activated on this account',
         arkDetectNotFound: 'No available model found (our candidate list may be outdated)',
         arkDetectBadKey: 'Cannot connect: most likely the Key is wrong',
+        arkTierName: (tier) => tier === 'agent-plan' ? 'Agent Plan'
+            : tier === 'coding-plan' ? 'Coding Plan'
+                : 'pay-as-you-go',
         arkDetectNeedKey: 'Paste your Key and the available model is detected automatically',
         arkDetectHint: 'The Key looks complete — click "Detect again" to try once',
         arkDetectRetry: 'Detect again',
