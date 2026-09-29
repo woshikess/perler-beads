@@ -17,9 +17,42 @@ import { installTouchTitleTips, useTouchGestures } from './useTouchGestures.js';
 // ⇒ 那是一条**死 import**（`tsconfig` 没开 `noUnusedLocals`，所以编译器不会提醒）。已删。
 // 断点常量本身仍在 `useMediaQuery.ts` 里，`App.tsx` 是它唯一的运行时消费方。
 const { useEffect, useMemo, useRef, useState } = React;
+/**
+ * B48-A1a：**只在尺寸/DPR 真的变了时**才重建绘制表面，返回本次生效的 `dpr`。
+ *
+ * 为什么要这样：给 `canvas.width` 赋值不是"设个数字"，而是**重置整个绘制表面**
+ * （重建 backing store + 清空全部 2D 上下文状态）。而这个函数被主绘制 effect 调用，
+ * 那个 effect 的依赖里含 `hoverPoint` ⇒ **每次鼠标移动都会重跑**，
+ * 于是实测在以 50~70 次/秒 的频率重建整块位图（dpr=2 时约 6 Mpx/次）。
+ *
+ * 跳过赋值后，原来由"重置"顺带保证的三件事改由调用方**显式**保证（见两个调用点）：
+ *   · 变换矩阵 `setTransform(dpr, …)`　· `globalAlpha = 1`　· `setLineDash([])`
+ * 审计依据：主画布上其余状态改动都在 `save()/restore()` 内或成对复位
+ * （`globalAlpha` 在 drawBeadStack 内成对、`setLineDash` 在笔刷光标与板缝里成对），
+ * 不存在跨次泄漏 ⇒ 跳过重置是等价的。
+ */
+function ensureCanvasSize(canvas, wrapper, last) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = wrapper.clientWidth;
+    const cssH = wrapper.clientHeight;
+    const w = Math.floor(cssW * dpr);
+    const h = Math.floor(cssH * dpr);
+    if (last.w !== w || last.h !== h || last.dpr !== dpr) {
+        canvas.width = w;
+        canvas.height = h;
+        canvas.style.width = `${cssW}px`;
+        canvas.style.height = `${cssH}px`;
+        last.w = w;
+        last.h = h;
+        last.dpr = dpr;
+    }
+    return dpr;
+}
 export default function WorkspaceCanvas({ project, selectedColorId, highlightedColorId, highlightedCellIndices, formatColorCode, tool, eraserSize, eraserScope, moveMode, mirrorMode, mirrorDirection, shapeKind, shapeFillMode, arrowKind, textToolValue, textToolDirection, textToolSize, textToolSpacing, onTextToolSizeChange, referenceImageUrl, referenceImageVisible, referenceImageOpacity, referenceImageScale, referenceImageOffset, referenceImageAdjusting, referenceImagePlacement, referenceAdjustHint, onReferenceOffsetChange, onReferenceScaleChange, clipboardPattern, clipboardPhase, copyMode, copySelectionIndices, onCommitStart, onCellsChange, onReplaceColor, onCopyPattern, onCopySelectionChange, onPastePattern, onPickColor, onHover, fitLabel, canEdit, isGenerating = false, generatingLabel, lockedHint, totalBeads, beadUnit, statusFacts, notice, noticeIsError, openPanel, setOpenPanel, panelLayout, paletteDotOpen, onPaletteDotClick, onPaletteDotCanvasPointerDown, paletteDotRef, paletteDotLabel, }) {
     const canvasRef = useRef(null);
     const wrapperRef = useRef(null);
+    /** B48-A1a：上一次真正写进 canvas 的位图尺寸（见 `ensureCanvasSize`）。0 = 还没写过。 */
+    const canvasSizeRef = useRef({ w: 0, h: 0, dpr: 0 });
     const draftCellsRef = useRef(getActiveLayerCells(project));
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -225,12 +258,12 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
         const context = canvas.getContext('2d');
         if (!context)
             return;
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width = Math.floor(wrapper.clientWidth * dpr);
-        canvas.height = Math.floor(wrapper.clientHeight * dpr);
-        canvas.style.width = `${wrapper.clientWidth}px`;
-        canvas.style.height = `${wrapper.clientHeight}px`;
+        const dpr = ensureCanvasSize(canvas, wrapper, canvasSizeRef.current);
         context.setTransform(dpr, 0, 0, dpr, 0, 0);
+        // B48-A1a：跳过一次 canvas.width 赋值后，这两个状态不再被"重置"顺带清掉 ⇒ 显式复位
+        //（主画布上其余状态改动都在 save()/restore() 内或成对复位，见 ensureCanvasSize 注释）
+        context.globalAlpha = 1;
+        context.setLineDash([]);
         drawPattern(context, project, cellSize, zoom, pan, highlightedColorId, highlightedCellIndices, tool, clipboardPhase, selectedColorId, eraserSize, eraserScope, moveMode, mirrorMode, clipboardPattern, copyMode, copySelectionIndices, shapeDraft, hoverPoint, canEdit, referenceImageOptions, textToolValue, textToolDirection, textToolSize, textToolSpacing, formatColorCode);
     }, [project, cellSize, zoom, pan, highlightedColorId, highlightedCellIndices, tool, clipboardPhase, selectedColorId, eraserSize, eraserScope, moveMode, mirrorMode, clipboardPattern, copyMode, copySelectionIndices, shapeKind, shapeDraft, hoverPoint, canEdit, referenceImageOptions, textToolValue, textToolDirection, textToolSize, textToolSpacing, formatColorCode]);
     useEffect(() => {
@@ -239,14 +272,12 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
             const wrapper = wrapperRef.current;
             if (!canvas || !wrapper)
                 return;
-            const dpr = window.devicePixelRatio || 1;
-            canvas.width = Math.floor(wrapper.clientWidth * dpr);
-            canvas.height = Math.floor(wrapper.clientHeight * dpr);
-            canvas.style.width = `${wrapper.clientWidth}px`;
-            canvas.style.height = `${wrapper.clientHeight}px`;
             const context = canvas.getContext('2d');
             if (context) {
+                const dpr = ensureCanvasSize(canvas, wrapper, canvasSizeRef.current);
                 context.setTransform(dpr, 0, 0, dpr, 0, 0);
+                context.globalAlpha = 1;
+                context.setLineDash([]);
                 drawPattern(context, project, cellSize, zoom, pan, highlightedColorId, highlightedCellIndices, tool, clipboardPhase, selectedColorId, eraserSize, eraserScope, moveMode, mirrorMode, clipboardPattern, copyMode, copySelectionIndices, shapeDraft, hoverPoint, canEdit, referenceImageOptions, textToolValue, textToolDirection, textToolSize, textToolSpacing, formatColorCode);
             }
             setPan((current) => {
@@ -1023,7 +1054,11 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
     const loupeCode = loupeColorId ? (formatColorCode?.(loupeColorId) ?? '') : '';
     return (React.createElement("div", { className: "workspace", ref: wrapperRef },
         isGenerating && (React.createElement("div", { className: "workspace-generating" },
-            React.createElement(GeneratingHeart, { label: generatingLabel }))),
+            React.createElement("div", { className: "workspace-busy-wrap" },
+                React.createElement("div", { className: "workspace-busy", role: "status", "aria-live": "polite" },
+                    React.createElement("span", { className: "workspace-spinner", "aria-hidden": "true" }),
+                    React.createElement("span", null, generatingLabel)),
+                React.createElement(GeneratingHeart, { label: "" })))),
         React.createElement("canvas", { ref: canvasRef, className: canvasClassName, "data-tool": canvasTool, "data-eraser-scope": canvasEraserScope, onContextMenu: (event) => event.preventDefault(), onPointerDown: handlePointerDown, onPointerMove: handlePointerMove, onPointerUp: handlePointerUp, onPointerCancel: (event) => handlePointerUp(event, true), onPointerLeave: handlePointerLeave, onWheel: handleWheel }),
         loupe && (() => {
             const wrap = wrapperRef.current;

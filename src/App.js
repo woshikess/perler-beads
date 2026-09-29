@@ -3,6 +3,7 @@ import ThreePreview from './ThreePreview.js';
 import { AI_REDRAW_TIMEOUT_MS, buildPrompt, calcSize } from './arkDirect.js';
 import { DEFAULT_ARK_TIER, arkImagesEndpoint, isArkTier, orderArkTiers, } from './arkEndpoints.js';
 import { ARK_LINKS, ARK_MODEL_CANDIDATES, detectActivatedModel, formatRawBits } from './arkDiagnostics.js';
+import { buildCustomRequest, fetchImageAsDataUrl, isCustomShape, normalizeBaseUrl, orderCustomShapes, parseImageResponse, probeCustomEndpoint, } from './aiProvider.js';
 import { downloadPrintPdf, downloadPrintPng, downloadProjectJson, downloadUsageWorkbook } from './exporters.js';
 import { imageFileToBeads } from './imageToBeads.js';
 // B36：主体分割模型（MediaPipe Selfie Multiclass）。打开页面就开始后台加载，失败则静默走老算法。
@@ -20,13 +21,13 @@ import {
 // B6：`createLayer` 从这条 import 里删掉了 —— 它唯一的消费方是 `addLayer()`（本批删除），
 //     删除后它就成了死 import（`tsc --noUnusedLocals` 实测报 TS6133）。
 //     ⚠️ `project.ts` 里的 `createLayer` 本身**保留**（数据模型不动，启动时仍由 `createProject()` 建一层）。
-composeVisibleCells, createProject, getSourceImageRef, loadDraft, normalizeProject, saveDraft, sourceImageRefFromStored, withCells, withLayers, withSourceImage, } from './project.js';
+composeVisibleCells, createProject, getSourceImageRef, loadDraft, normalizeProject, saveDraft, withCells, withLayers, withSourceImage, } from './project.js';
 // W6 接线（R5 / KI-007 根修）：源图持久化。
 // 两条硬约束见 W4 交付报告 §8 与 V-W4 §7：
 //   (A) 源图关联**只能有一个写者**（`sourceImageRef` 状态 + 唯一持久化点合并），
 //       否则 `generateFromImage()` 的整份写回会把它冲成 null；
 //   (B) 恢复出来的源图必须**抑制第一轮自动重算**，否则刷新会把恢复的图纸覆盖掉。
-import { SOURCE_IMAGE_LOST_NOTICE, clearSourceImage, loadSourceImage, probeSourceImage, saveSourceImage, } from './imageStore.js';
+import { clearSourceImage, loadSourceImage, probeSourceImage, saveSourceImage, } from './imageStore.js';
 import { findIsolatedBeads, summarizeUsage } from './usage.js';
 const { useEffect, useMemo, useRef, useState } = React;
 // —— W0.1 纯搬迁后的导入（模块都在 src/ 下平铺，不建子目录）——
@@ -144,6 +145,18 @@ const defaultImportSettings = {
 const AI_HISTORY_LIMIT = 5;
 /** B36 判据用的分析尺寸：把图缩到 256×256 后算噪点中位数（与模型输入同尺寸，省一次缩放） */
 const SUBJECT_GATE_ANALYSIS_SIDE = 256;
+/**
+ * B48-A5：草稿落盘的**最小间隔**（毫秒）。
+ *
+ * 为什么需要：草稿的持久化 effect 依赖 `project`，而拖动/擦除期间 `project` **每一帧都换新对象**
+ * ⇒ 原来会每帧同步 `JSON.stringify(project)` 并写 localStorage。实测（钩 JSON.stringify + setItem）
+ * 52 板擦除时是 **24 次/秒、1630 KB/s**，草稿本身 72,297 字符；156 板按同一公式约 9 倍。
+ *
+ * 现在的语义：**首次改动立刻写**（这样"随时关页"最多丢一个间隔），随后进入冷却，
+ * 冷却期内只记住最新值、冷却结束时补写一次 ⇒ 写入频率上限 `1 / DRAFT_SAVE_INTERVAL_MS`，
+ * 最大数据损失窗口也是这个值；再叠 `pagehide` / `visibilitychange` 的 flush 覆盖"直接关掉页面"。
+ */
+const DRAFT_SAVE_INTERVAL_MS = 400;
 /** 把 File 解码成 HTMLImageElement（只用于算主体掩膜；出图那边自己还会解码一次） */
 function decodeImageFile(file) {
     return new Promise((resolve) => {
@@ -246,15 +259,31 @@ export default function App() {
      *     下次启动不再提示，这正是"一次性"。
      */
     const initialSoloIgnoredRef = useRef(false);
+    /**
+     * B50-c（用户裁决）：**每次打开/刷新都是全新的一张白纸** —— 不再自动读草稿、不再自动恢复源图。
+     *
+     * 上次那份草稿仍然读出来，但**只放进这个 ref**，供「恢复上次图纸」入口使用（见 `recoverSavedDraft()`）。
+     * 所以 `project` 初值恒为 `createProject()`、`sourceImageRef` 初值恒为 `null`。
+     *
+     * ⚠️ 配套的坑（必须一起处理，否则这个入口当场失效）：草稿的唯一持久化点在挂载后立刻会跑一次，
+     * 而"空白状态"写进草稿会**把上次那份有用的草稿覆盖掉**（`withSourceImage(p, null)` 还会删掉
+     * 源图关联键）⇒ 见下面那个 effect 的 `worth` 判据。
+     */
+    const savedDraftRef = useRef(null);
     if (initialProjectRef.current === null) {
-        const loaded = loadDraft() ?? createProject();
-        initialSoloIgnoredRef.current = loaded.settings?.showActiveLayerOnly === true;
-        initialProjectRef.current = initialSoloIgnoredRef.current
-            ? { ...loaded, settings: { ...loaded.settings, showActiveLayerOnly: false } }
-            : loaded;
+        initialProjectRef.current = createProject();
+        const saved = loadDraft();
+        if (saved && saved.cells.some((cell) => cell !== null)) {
+            const soloIgnored = saved.settings?.showActiveLayerOnly === true;
+            savedDraftRef.current = {
+                project: soloIgnored ? { ...saved, settings: { ...saved.settings, showActiveLayerOnly: false } } : saved,
+                sourceImageRef: getSourceImageRef(saved),
+                soloIgnored,
+            };
+        }
     }
     const [project, setProject] = useState(initialProjectRef.current);
-    const [sourceImageRef, setSourceImageRef] = useState(() => getSourceImageRef(initialProjectRef.current));
+    const [sourceImageRef, setSourceImageRef] = useState(null);
     const [selectedColorId, setSelectedColorId] = useState(defaultColorId);
     const [recentColorIds, setRecentColorIds] = useState(defaultRecentColorIds);
     const [tool, setTool] = useState('pencil');
@@ -301,7 +330,7 @@ export default function App() {
     const [pendingImageUrl, setPendingImageUrl] = useState(null);
     // ——— W6 接线（W4 §8.4）：源图持久化的状态与 ref ———
     /** 启动时正在从 IndexedDB 读回上次的源图（加载窗口期不能让卡片显示"未选择图片"）。 */
-    const [sourceImageLoading, setSourceImageLoading] = useState(true);
+    const [sourceImageLoading, setSourceImageLoading] = useState(false);
     /** `unknown` = 还没探过；`persistent` = 已落库；`memory` = 只在内存（刷新会丢，必须常驻告知）。 */
     const [persistMode, setPersistMode] = useState('unknown');
     /** 降级解释的**常驻**落点（浮条会被出图状态顶掉，实测可见窗口只有 ~400ms ⇒ 光弹浮条不算告知）。 */
@@ -331,6 +360,34 @@ export default function App() {
     // 模型设置默认收起，需要时点开
     const [aiModelOpen, setAiModelOpen] = useState(false);
     /**
+     * B49：**接口选择** —— 火山方舟（默认，三档自动识别）或「OpenAI 兼容（自定义地址）」。
+     *
+     * 为什么要它：方舟的套餐 Key 在纯静态网页里**永远调不通**（`/api/plan/v3` 的预检不放行
+     * `authorization`，见 runAiRedraw 里的实测注释）；而用户自备的中转站/自建代理**放行**该头，
+     * 于是"填自己的地址 + 自己的 Key"就能用（实测 `_审核\_暂存证据\第B49批-自定义AI接口\连通性实测.md`）。
+     */
+    const [aiProviderKind, setAiProviderKind] = useState(() => (localStorage.getItem('ark-provider') === 'custom' ? 'custom' : 'ark'));
+    /** 自定义地址（base URL，例如 `https://your-host/v1`） */
+    const [aiBaseUrl, setAiBaseUrl] = useState(() => localStorage.getItem('ark-base-url') ?? '');
+    /** 上次成功的请求形状（'' = 还不知道）。下次先用它，省一次无用往返。 */
+    const [aiCustomShape, setAiCustomShape] = useState(() => {
+        const saved = localStorage.getItem('ark-custom-shape');
+        return isCustomShape(saved) ? saved : '';
+    });
+    /** 自定义地址下的模型 ID。**与方舟分开存**：两边的模型名互不通用，共用一个字段会让切换后必然报错。 */
+    const [aiModelCustom, setAiModelCustom] = useState(() => localStorage.getItem('ark-model-custom') ?? '');
+    /** 「测试连接」的结论（只走免费的 `GET /models`，绝不发会生成图片的请求） */
+    const [customProbe, setCustomProbe] = useState({ phase: 'idle' });
+    /**
+     * 「高级设置」折叠状态。
+     *
+     * 默认规则：**没填 Key 就展开**（否则新用户找不到填 Key 的地方）；
+     * 已经配好了就收起，把左栏高度让出来（用户 2026-09-26 裁决：只折叠高级设置，
+     * 出图风格/背景/结果/开始生图 常显）。
+     * ⚠️ 这条规则同时保证**验收脚本**在全新 profile 下仍能找到 `.ai-field-row--key input`。
+     */
+    const [aiAdvancedOpen, setAiAdvancedOpen] = useState(() => !(localStorage.getItem('ark-api-key') ?? '').trim());
+    /**
      * B45：AI 卡片里的「出图风格」—— **独立状态，与「参数调节 → 宽度」无关**。
      * 它只决定一件事：发给方舟的提示词用哪一套（`buildPrompt(bg, aiStyle)`）。
      * 默认 `'q-chibi'` ＝现行线上那版提示词。
@@ -353,8 +410,6 @@ export default function App() {
     const [aiHistoryIndex, setAiHistoryIndex] = useState(-1); // 当前选中的历史下标，-1 = 未选
     // 当前 AI 结果是哪张素材生成的（换素材后要重置，避免拿旧图的 AI 结果）
     const [aiResultSourceFile, setAiResultSourceFile] = useState(null);
-    // 图纸生成之后是否被手动绘制修改过（用于自动刷新前决定要不要弹提示）
-    const [patternHandEdited, setPatternHandEdited] = useState(false);
     const [referenceFile, setReferenceFile] = useState(null);
     const [referenceImageUrl, setReferenceImageUrl] = useState(null);
     const [referenceVisible, setReferenceVisible] = useState(false);
@@ -563,13 +618,59 @@ export default function App() {
         const color = getColor(colorId);
         return color ? displayCode(color) : '';
     }
+    /**
+     * W6 接线（W4 §8.3）：这是草稿的**唯一**持久化点，源图关联在这里合并。
+     * 合并而不是"存图成功后 setProject(withSourceImage(...))"：`generateFromImage()` 会在开头
+     * 抓 `sourceProject` 快照、结束整份写回，后者写进去的关联会在约 400ms 后被冲成 null
+     * （V-W4 §7① 实测 403ms、`logs/c9_atime_5475_E1naive.json`）。
+     *
+     * B48-A5：**加节流**（原因与语义见 `DRAFT_SAVE_INTERVAL_MS` 的注释）。要点：
+     *   · 冷却已结束 ⇒ 立刻写一次并开始冷却；
+     *   · 冷却中 ⇒ 只更新 `draftRef`，不写（冷却结束时补写最新值）；
+     *   · 关页/切到后台 ⇒ flush（下面那个 effect）。
+     * 这就是"节流 + 尾随补写"：写入次数有上限，且**最多只丢一个间隔**。
+     */
+    const draftRef = useRef({ project, sourceImageRef, pendingFile });
+    const draftSaveTimerRef = useRef(null);
+    /**
+     * B50-c：**"空白状态"不写草稿**。
+     * 默认每次打开都是新的白纸，而挂载后这个 effect 会立刻跑一次 —— 若照写，
+     * 就会用"空图纸 + 无源图"覆盖掉上次那份有价值的草稿（`withSourceImage(p, null)` 还会删掉源图关联键），
+     * 「恢复上次图纸」入口随即失效。所以只有"确实有东西"（有源图或有格子）才落盘。
+     */
+    const draftWorthSaving = (state) => state.pendingFile !== null || state.project.cells.some((cell) => cell !== null);
     useEffect(() => {
-        // W6 接线（W4 §8.3）：这是草稿的**唯一**持久化点，源图关联在这里合并。
-        // 合并而不是"存图成功后 setProject(withSourceImage(...))"：`generateFromImage()` 会在开头
-        // 抓 `sourceProject` 快照、结束整份写回，后者写进去的关联会在约 400ms 后被冲成 null
-        // （V-W4 §7① 实测 403ms、`logs/c9_atime_5475_E1naive.json`）。
+        draftRef.current = { project, sourceImageRef, pendingFile };
+        if (!draftWorthSaving({ project, pendingFile }))
+            return;
+        if (draftSaveTimerRef.current !== null)
+            return;
         saveDraft(withSourceImage(project, sourceImageRef));
-    }, [project, sourceImageRef]);
+        draftSaveTimerRef.current = window.setTimeout(() => {
+            draftSaveTimerRef.current = null;
+            const latest = draftRef.current;
+            if (!draftWorthSaving(latest))
+                return;
+            saveDraft(withSourceImage(latest.project, latest.sourceImageRef));
+        }, DRAFT_SAVE_INTERVAL_MS);
+    }, [project, sourceImageRef, pendingFile]);
+    useEffect(() => {
+        // 节流之后必须补这一条：否则"编辑完立刻关页"会丢掉最后一个间隔内的改动。
+        const flush = () => {
+            const latest = draftRef.current;
+            if (!draftWorthSaving(latest))
+                return;
+            saveDraft(withSourceImage(latest.project, latest.sourceImageRef));
+        };
+        const onVisibility = () => { if (document.visibilityState === 'hidden')
+            flush(); };
+        document.addEventListener('visibilitychange', onVisibility);
+        window.addEventListener('pagehide', flush);
+        return () => {
+            document.removeEventListener('visibilitychange', onVisibility);
+            window.removeEventListener('pagehide', flush);
+        };
+    }, []);
     useEffect(() => {
         localStorage.setItem(languageKey, language);
     }, [language]);
@@ -586,68 +687,30 @@ export default function App() {
         void ensureSegmenter();
     }, []);
     /**
-     * W6 接线（W4 §8.5）：启动时从 IndexedDB 恢复上次的源图 —— 这是 KI-007 的**根修**。
+     * B50-c（用户裁决）：启动时**不再自动恢复**上次的源图与图纸 —— 每次打开/刷新都是新的白纸。
      *
-     * 顺序固定：先 `probeSourceImage`（只读 meta，很快）→ 有才 `loadSourceImage`（含解码校验）。
-     * 三条分支都要给用户明确告知，不许静默：
-     *   · 探到且读回成功 ⇒ `persistMode='persistent'`，把 `File` 塞回 `pendingFile`；
-     *   · `not-found` 而草稿里**记着**关联 ⇒ 一次性告知 `SOURCE_IMAGE_LOST_NOTICE`（曾有、现在没了）；
-     *   · 探不到/报错（隐私模式、配额、大图）⇒ `persistMode='memory'` + **常驻** `persistNotice`。
-     * `userUploadedRef` 是竞态护栏：恢复途中用户自己传了图，恢复结果直接作废（别覆盖用户的选择）。
+     * 这里只做一次"本机还有没有留存的存档"的**只读探测**，用来决定要不要显示「恢复上次图纸」入口；
+     * 真正的恢复动作由用户点击触发（`recoverSavedDraft()`）。
+     * 原实现（W6 接线，KI-007 根修）会直接把源图塞回 `pendingFile`、把草稿当成本次图纸 —— 那条路径
+     * 与"每次都要新的一张"冲突，故整段改为探测 + 手动恢复。相关历史见 `_审核\_暂存证据\W4-源图持久化\`。
      */
+    const [canRecover, setCanRecover] = useState(false);
     useEffect(() => {
         let cancelled = false;
         void (async () => {
             const mountLanguage = localStorage.getItem(languageKey) === 'en' ? 'en' : 'zh';
-            const expected = getSourceImageRef(project); // 挂载时的草稿关联（✅ 就是我们要的那份）
+            const saved = savedDraftRef.current; // 有格子才算"有图纸可恢复"（空白草稿不值得提示）
+            const boardHasContent = saved !== null;
             try {
                 const probe = await probeSourceImage({ language: mountLanguage });
                 if (cancelled)
                     return;
-                if (probe.present) {
-                    const loaded = await loadSourceImage({
-                        language: mountLanguage,
-                        expectedImageId: expected?.imageId ?? null,
-                    });
-                    if (cancelled || userUploadedRef.current)
-                        return;
-                    if (loaded.found && loaded.image) {
-                        const file = loaded.image.file;
-                        restoredFileRef.current = file; // ← 见自动重算 effect 的"抑制第一轮"
-                        setPendingFile(file);
-                        setPendingImageUrl((current) => {
-                            if (current)
-                                URL.revokeObjectURL(current);
-                            return URL.createObjectURL(file);
-                        });
-                        // 图源历史第 0 条 = 原图（与上传路径保持一致）
-                        setAiHistory([{ file, url: URL.createObjectURL(file), bg: 'keep', isOriginal: true }]);
-                        setAiHistoryIndex(0);
-                        setPatternHandEdited(false);
-                        setPersistMode('persistent');
-                        setPersistNotice(null);
-                        if (!expected)
-                            setSourceImageRef(sourceImageRefFromStored(loaded.image)); // 老草稿：补上关联
-                    }
-                    else if (loaded.notice) {
-                        setNoticeIsError(true);
-                        setNotice(loaded.notice);
-                    }
-                }
-                else if (probe.code === 'not-found') {
-                    if (expected) {
-                        setNoticeIsError(true);
-                        setNotice(SOURCE_IMAGE_LOST_NOTICE[mountLanguage]);
-                    }
-                }
-                else if (probe.notice) {
-                    setPersistMode('memory');
-                    setPersistNotice(probe.notice);
-                    if (expected) {
-                        setNoticeIsError(true);
-                        setNotice(probe.notice);
-                    }
-                }
+                // 草稿里有图纸，或者本机存着上次的源图 ⇒ 都算"可恢复"
+                setCanRecover(boardHasContent || probe.present);
+            }
+            catch {
+                if (!cancelled)
+                    setCanRecover(boardHasContent);
             }
             finally {
                 if (!cancelled)
@@ -657,6 +720,55 @@ export default function App() {
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+    /**
+     * 「恢复上次图纸」：把上次留在这台设备上的草稿（含手画格子）与源图找回来。
+     *
+     * 与旧自动恢复路径的区别只有"谁触发"：这里由用户点击触发，且**只在这一件事上**沿用旧逻辑
+     * （`restoredFileRef` 抑制自动重算第一轮，避免把草稿里的图纸立刻覆盖掉）。
+     */
+    async function recoverSavedDraft() {
+        const saved = savedDraftRef.current;
+        if (saved) {
+            updateProject(saved.project);
+            setSourceImageRef(saved.sourceImageRef); // 保住与源图的关联（否则唯一持久化点会删掉这个键）
+        }
+        setSourceImageLoading(true);
+        let restored = false;
+        try {
+            const loaded = await loadSourceImage({ language, expectedImageId: saved?.sourceImageRef?.imageId ?? null });
+            if (loaded.found && loaded.image) {
+                const file = loaded.image.file;
+                restoredFileRef.current = file; // ← 抑制自动重算第一轮：图纸已经在草稿里了
+                setPendingFile(file);
+                setPendingImageUrl((current) => {
+                    if (current)
+                        URL.revokeObjectURL(current);
+                    return URL.createObjectURL(file);
+                });
+                setAiHistory([{ file, url: URL.createObjectURL(file), bg: 'keep', isOriginal: true }]);
+                setAiHistoryIndex(0);
+                setPersistMode('persistent');
+                setPersistNotice(null);
+                restored = true;
+            }
+            else if (loaded.notice) {
+                setNoticeIsError(true);
+                setNotice(loaded.notice);
+                return;
+            }
+            else {
+                restored = saved !== null; // 草稿里的图纸恢复了，只是源图没了
+            }
+        }
+        finally {
+            setSourceImageLoading(false);
+            setCanRecover(false);
+        }
+        setNoticeIsError(saved?.soloIgnored === true);
+        setNotice(saved?.soloIgnored ? text.retiredLayerVisibilityNotice : text.recoverLastPatternDone);
+        if (!restored)
+            setCanRecover(false);
+    }
     useEffect(() => {
         return () => {
             if (pendingImageUrl)
@@ -696,6 +808,23 @@ export default function App() {
             setAiArkTier(result.tier);
             localStorage.setItem('ark-tier', result.tier);
         }
+    }
+    /**
+     * B49：自定义接口的「测试连接」—— **只走免费的 `GET {base}/models`**。
+     *
+     * ⚠️ 这里**故意不用**方舟那套「`size: 1x1` 零费用探针」：那是方舟在**参数校验阶段**才有的行为。
+     * 实测被测算的中转站把非法尺寸**静默忽略、照样生成了一张图**（真的花了钱，已如实登记在
+     * `_审核\_暂存证据\第B49批-自定义AI接口\连通性实测.md`）⇒ 自定义地址一律用读接口。
+     * 顺带好处：`/models` 返回的列表正好可以当模型下拉的候选。
+     */
+    async function runCustomProbe() {
+        if (!normalizeBaseUrl(aiBaseUrl)) {
+            setCustomProbe({ phase: 'done', result: { kind: 'bad-url' } });
+            return;
+        }
+        setCustomProbe({ phase: 'running' });
+        const result = await probeCustomEndpoint(aiBaseUrl, aiApiKey);
+        setCustomProbe({ phase: 'done', result });
     }
     useEffect(() => {
         // 这里**故意**不依赖 language / aiModel：换语言和自动填模型都不该重新打探针
@@ -746,6 +875,25 @@ export default function App() {
         window.addEventListener('paste', onPaste);
         return () => window.removeEventListener('paste', onPaste);
     }, []);
+    /**
+     * 「自动重算」的签名 —— **唯一一份定义**。
+     *
+     * 为什么抽出来：B50 的 `selectHistoryEntry()` 需要在**切换版本时按目标版本的参数"预演"签名**，
+     * 好让下面那个 effect 认为"什么都没变"、从而**不重算**（否则切回旧版本约 1 秒后，
+     * 用户在这个版本上做的修改就会被自动重算覆盖 —— 实测过，见 B50 门禁 ⑧/⑫）。
+     * 若两处各写一份数组，将来改签名必漏一处 ⇒ 定时炸弹。所以只有这一份。
+     */
+    function autoGenerateSignature(overrides) {
+        const v = {
+            convertWidth, maxColors, generationStyle, backgroundMode,
+            tolerance, toleranceManual, paletteMode,
+            ...(overrides ?? {}),
+        };
+        return [
+            sourceTokenRef.current, v.convertWidth, v.maxColors, v.generationStyle, v.backgroundMode,
+            v.tolerance, v.paletteMode, aiHistory.length, v.toleranceManual,
+        ].join('|');
+    }
     useEffect(() => {
         if (!pendingFile) {
             autoGenerateSignatureRef.current = null;
@@ -763,10 +911,18 @@ export default function App() {
          *   · 其余（换图 / 改参数）照旧 420ms 防抖重算。
          * `sourceTokenRef` 让"重新上传同一张图"照样重算 —— 只比参数签名会漏掉这种情况。
          */
-        const signature = [
-            sourceTokenRef.current, convertWidth, maxColors, generationStyle, backgroundMode,
-            tolerance, paletteMode, aiHistoryIndex, aiHistory.length, toleranceManual,
-        ].join('|');
+        /**
+         * ⚠️ B50：签名里**不能**放 `aiHistoryIndex`。
+         *
+         * 切换图源历史时 `selectHistoryEntry()` 已经**显式**调了一次
+         * `generateFromImage({ sourceFile: item.file })`；而本 effect 只要签名变化就会再算一次
+         * ⇒ 同一张源图、同一套参数被**算两遍**。
+         * 实测（`Image.src` 赋值时间戳）：一次切换里管线跑了 2 遍，相隔 1677ms；
+         * 证据 `_审核\_暂存证据\第B49批-自定义AI接口\报告_切历史耗时.json`、`验收记录` 第 B50 节。
+         *
+         * 保留 `aiHistory.length`：**新增**一张 AI 图之后仍需要兜底重算一次（那条路径没有重复触发）。
+         */
+        const signature = autoGenerateSignature();
         const previous = autoGenerateSignatureRef.current;
         autoGenerateSignatureRef.current = signature;
         if (previous === null && restoredFileRef.current === pendingFile) {
@@ -782,7 +938,47 @@ export default function App() {
             void generateFromImage({ recordHistory: shouldCommit, automatic: true });
         }, 420);
         return () => window.clearTimeout(timer);
-    }, [pendingFile, convertWidth, maxColors, generationStyle, backgroundMode, tolerance, paletteMode, aiHistoryIndex, aiHistory.length, toleranceManual]);
+    }, [pendingFile, convertWidth, maxColors, generationStyle, backgroundMode, tolerance, paletteMode, aiHistory.length, toleranceManual]);
+    /**
+     * B50：**把当前图纸记进当前选中的那个版本**（"图源历史"的一条）。
+     *
+     * 这就是用户要的"我做了任何修改就直接保存下来、下次点这个缩略图就回到我改过的样子"：
+     * 不需要任何保存键 —— 改画布、调参数、出图，只要 `project` 变了，本 effect 就把它写进当前版本。
+     *
+     * 三个关键设计（都有踩坑理由）：
+     *  1. **按引用存**：`project` 是不可变的（`withCells()` 等每次都产生新对象）⇒ 存引用零成本，
+     *     不用深拷贝，各版本之间也不会互相污染。
+     *  2. **依赖只有 `project` / `aiHistoryIndex`，故意不含参数**：这样 `board` 与 `params`
+     *     永远是"同一次出图产出的一对"。若把参数也放进依赖，就会出现"参数已改、图纸还没重算"
+     *     的中间态被记进去 —— 切回该版本时会拿**旧图纸配新参数**。
+     *  3. **跳过 `boardPending` 的条目**：新条目是"AI 图刚拿到、管线还没跑"时就追加并选中的，
+     *     此时记录会把上一版的图纸记成它的快照（详见 `AiHistoryItem.boardPending` 的说明）。
+     */
+    useEffect(() => {
+        if (aiHistoryIndex < 0)
+            return;
+        setAiHistory((items) => {
+            const current = items[aiHistoryIndex];
+            if (!current)
+                return items;
+            if (current.boardPending)
+                return items; // 还没为它算过图纸
+            if (current.board === project)
+                return items; // 引用相同 ⇒ 没变化，bail out（避免无谓重渲染）
+            const next = items.slice();
+            next[aiHistoryIndex] = {
+                ...current,
+                board: project,
+                params: {
+                    convertWidth, maxColors, generationStyle, backgroundMode,
+                    tolerance, toleranceManual, paletteMode,
+                },
+                style: aiStyle,
+            };
+            return next;
+        });
+        // 参数不进依赖数组是有意的，理由见上面第 2 点
+    }, [project, aiHistoryIndex]);
     function commitHistory() {
         setPast((items) => [...items.slice(-39), project]);
         /*
@@ -803,11 +999,12 @@ export default function App() {
         presentPaletteModeRef.current = paletteMode;
         setFuture([]);
         setFutureModes([]);
-        // 只有「图纸已存在时的操作」才算手动修改。
-        // 生成图纸本身也会调用 commitHistory（recordHistory），此时 isGenerating 为真，要排除。
-        if (!isGenerating && project.cells.some((cell) => cell !== null)) {
-            setPatternHandEdited(true);
-        }
+        /*
+          B50 删掉了这里原来的 `setPatternHandEdited(true)`：那个标记只服务于"自动刷新前弹确认框"，
+          而**确认框已整体删除**（用户 2026-09-26 裁决：不要弹窗，修改直接存进当前版本）。
+          现在"手改保护"由**每个版本各存一份图纸快照**实现 —— 见 `AiHistoryItem.board` 与
+          `selectHistoryEntry()`。于是这个标记彻底没有消费方，一并删除（含它的复位点）。
+        */
     }
     function updateProject(next) {
         setProject({ ...next, updatedAt: new Date().toISOString() });
@@ -1460,11 +1657,12 @@ export default function App() {
         // 图源历史重置成「只有原图」这一条。
         // 第 0 条永远是原图，之后每点一次「生成 AI 图」追加一条，靠历史选中项来切换图纸。
         const originalUrl = URL.createObjectURL(file);
-        setAiHistory([{ file, url: originalUrl, bg: 'keep', isOriginal: true }]);
+        // B50：`boardPending: true` —— 这张原图的图纸还没算（由自动重算 effect 接着跑），
+        // 先别让快照 effect 把**上一张图残留的图纸**记成它的快照。
+        setAiHistory([{ file, url: originalUrl, bg: 'keep', isOriginal: true, boardPending: true }]);
         setAiHistoryIndex(0);
         setAiResultUrl(null);
         setAiResultSourceFile(null);
-        setPatternHandEdited(false);
         setNotice(language === 'zh' ? `正在生成 ${file.name}...` : `Generating ${file.name}...`);
         // W6 接线（W4 §8.7）：写入 IndexedDB。
         // ⚠️ 成功/失败都**只改 `sourceImageRef` 这一个状态**，绝不 `setProject(withSourceImage(...))` ——
@@ -1535,10 +1733,106 @@ export default function App() {
             bytes[i] = bin.charCodeAt(i);
         return new File([bytes], fileName, { type: mime });
     }
+    /**
+     * B49：自定义（OpenAI 兼容）接口的图生图。
+     *
+     * 返回形状与 `runAiRedraw` **完全一致**（`{file, url}`），所以调用方无感、方舟那条路一个字都不用改。
+     *
+     * 形状按 `orderCustomShapes(上次成功的那种)` 依次试：
+     *   ① `multipart /images/edits` —— OpenAI 官方形状，实测该中转站一次就成功；
+     *   ② `JSON /images/generations` + `image` dataURL —— 方舟与部分中转站的形状，作回退。
+     * 只有"**这个形状不被支持**"（404 / 405 / 400 且错误提到 image·param·unsupported）才换形状；
+     * 鉴权（401/403）、额度（429）换形状也没用 ⇒ 直接抛，并把服务原话带出去。
+     *
+     * 两种形状都**不发 `size`**（用户裁决 2026-09-26）：实测那个服务把非法尺寸静默忽略、回自己的默认尺寸，
+     * 所以 `size` 在那边本来就不是可靠旋钮；方舟那边仍按板宽算尺寸，不受影响。
+     */
+    async function runCustomAiRedraw(file, modelId, style) {
+        const base = normalizeBaseUrl(aiBaseUrl);
+        if (!base) {
+            throw new Error('自定义地址要填完整的 http:// 或 https:// 开头的地址（例如 https://your-host/v1）。');
+        }
+        const key = aiApiKey.trim();
+        if (!key)
+            throw new Error('请先填 API Key。');
+        const model = modelId.trim();
+        if (!model)
+            throw new Error('自定义接口需要填**模型 ID**（可以先点「测试连接」从模型列表里挑一个）。');
+        const imageDataUrl = await readFileAsDataUrl(file);
+        const prompt = buildPrompt(backgroundMode, style);
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), AI_REDRAW_TIMEOUT_MS);
+        const failures = [];
+        let parsed = null;
+        let usedShape = null;
+        try {
+            for (const shape of orderCustomShapes(aiCustomShape)) {
+                const label = shape === 'edits' ? 'multipart 图片编辑' : 'JSON 图片生成';
+                let resp;
+                try {
+                    const req = buildCustomRequest({ baseUrl: base, apiKey: key, model, prompt, imageDataUrl, shape });
+                    resp = await fetch(req.url, { ...req.init, signal: controller.signal });
+                }
+                catch (error) {
+                    if (error instanceof DOMException && error.name === 'AbortError') {
+                        throw new Error(`AI 重绘超时（已等待 ${Math.round(AI_REDRAW_TIMEOUT_MS / 1000)} 秒）。这次没有拿到图片，可以稍后重试。`);
+                    }
+                    failures.push(`${label}：连不上（${String(error?.message ?? error)}）`);
+                    continue;
+                }
+                const bodyText = await resp.text();
+                const result = parseImageResponse(resp.status, bodyText);
+                if (result.kind !== 'error') {
+                    parsed = result;
+                    usedShape = shape;
+                    break;
+                }
+                failures.push(`${label}：${result.message}（HTTP ${resp.status}）`);
+                const retriable = resp.status === 404 || resp.status === 405
+                    || (resp.status === 400 && /image|param|unsupported|unknown|not support/i.test(result.message));
+                if (!retriable) {
+                    throw new Error(`AI 重绘失败：${result.message}（HTTP ${resp.status}）。`
+                        + '这一版不会自动换形状重试——上面的 message 是服务原话，照它改 Key／模型／地址。');
+                }
+            }
+            if (!parsed || !usedShape) {
+                throw new Error('这个地址两种形状都试过了，都不是"图生图"接口：\n'
+                    + failures.join('\n')
+                    + '\n如果你的服务只支持纯文字生成（不带参考图），它没法用来把照片转成拼豆图纸。');
+            }
+            // 记住这次成功的形状，下次先用它
+            if (usedShape !== aiCustomShape) {
+                setAiCustomShape(usedShape);
+                localStorage.setItem('ark-custom-shape', usedShape);
+            }
+            let url;
+            if (parsed.kind === 'b64') {
+                url = 'data:image/png;base64,' + parsed.b64;
+            }
+            else {
+                try {
+                    url = await fetchImageAsDataUrl(parsed.url);
+                }
+                catch (error) {
+                    throw new Error('服务返回的是**图片链接**，但浏览器抓不到它（图床不允许跨域）。'
+                        + '请换一个直接返回 base64 的模型/参数，或让服务端允许跨域。'
+                        + `原始错误：${String(error?.message ?? error)}`);
+                }
+            }
+            const baseName = file.name.replace(/\.[^.]+$/, '');
+            return { file: dataUrlToFile(url, `${baseName}_ai.png`), url };
+        }
+        finally {
+            window.clearTimeout(timer);
+        }
+    }
     /** 直连火山方舟，得到像素画（返回新的 File 和缩略图 data URL）
      *  纯静态部署（GitHub Pages）下没有本地代理，所以浏览器直接调方舟：
      *  方舟对任意 Origin 都回跨域头，预检允许 authorization,content-type。 */
     async function runAiRedraw(file, modelId, style) {
+        // B49：选了自定义接口就整条走另一条路。**方舟这条路的代码一个字都没动**（下面全部原样）。
+        if (aiProviderKind === 'custom')
+            return runCustomAiRedraw(file, modelId, style);
         const dataUrl = await readFileAsDataUrl(file);
         const dims = await new Promise((resolve) => {
             const img = new Image();
@@ -1703,7 +1997,14 @@ export default function App() {
         const url = 'data:image/png;base64,' + item.b64_json;
         return { file: dataUrlToFile(url, `${base}_ai.png`), url };
     }
-    /** 把 AI 生成的图设为参考图（便于临摹/核对），原参考图不再是原照片 */
+    /**
+     * 把某张图设为参考图（便于临摹/核对）。
+     *
+     * ⚠️ B50-b **故意不打开显示开关**（`referenceVisible` 保持用户当前的选择）：
+     * 用户的反馈是"生图和切换历史版本之后会默认把参考图打开"，而默认应当是**关闭**的。
+     * 需要打开时由用户自己在「参考图 → 显示参考图」里勾。（面板里**主动选图**那条路径仍然会自动打开，
+     * 见 `handleReferenceFile()` —— 那是用户刚刚亲手选了参考图，直接显示才符合预期。）
+     */
     function useAsReference(file) {
         setReferenceFile(file);
         setReferenceImageUrl((current) => {
@@ -1711,11 +2012,18 @@ export default function App() {
                 URL.revokeObjectURL(current);
             return URL.createObjectURL(file);
         });
-        setReferenceVisible(true);
     }
     /**
      * 从历史里挑一条当作当前图源：第 0 条是原图，其余是 AI 图。
-     * 选中后立刻重算图纸 —— 纯本地，不调用 AI、不花钱。
+     *
+     * B50（用户 2026-09-26 裁决）起，这里**不再重算**，而是直接换回该版本存好的图纸：
+     *   · 用户在这个版本上做过的修改就存在 `item.board` 里（由快照 effect 持续写入）
+     *     ⇒ 点回来就是你改过的样子，而不是 AI 刚生成的那一版；
+     *   · **参数一起回退（1A）**：宽度 / 色数上限 / 出图风格 / 背景 / 容差 / 调色档 都回到那一刻，
+     *     否则会出现"图纸是旧版本的、滑条是新参数的"这种对不上的状态，再一拖滑条就把手改覆盖了；
+     *   · 先压一次撤销栈 ⇒ `Ctrl+Z` 能回到切换前那张图；
+     *   · 只有**刚建出来、还没为它算过图纸**的条目（`boardPending`）才走原来的重算路径。
+     * 顺带把用户最早抱怨的"切已经出过的图纸还要等一两秒"彻底去掉 —— 这里是纯状态替换。
      */
     function selectHistoryEntry(index) {
         const item = aiHistory[index];
@@ -1723,10 +2031,44 @@ export default function App() {
             return;
         setAiHistoryIndex(index);
         setAiResultSourceFile(item.isOriginal ? null : pendingFile);
-        if (!item.isOriginal) {
+        if (!item.isOriginal)
             setAiResultUrl(item.url);
-            useAsReference(item.file);
+        /*
+          参考图**跟着版本走**（用户 2026-09-26 反馈：切版本时"图纸和参数都变了，但参考图没有跟着变"）：
+          原图版本 ⇒ 原照片；AI 版本 ⇒ 那张 AI 图。只换图，显示开关仍由用户掌握（见 `useAsReference`）。
+        */
+        useAsReference(item.file);
+        // ① 有存好的图纸 ⇒ 秒回（B50 主路径：不跑管线、不调 AI）
+        if (item.board && !item.boardPending) {
+            const params = item.params;
+            if (params) {
+                setConvertWidth(params.convertWidth);
+                setWidthInput(String(params.convertWidth));
+                setMaxColors(params.maxColors);
+                setGenerationStyle(params.generationStyle);
+                setBackgroundMode(params.backgroundMode);
+                setTolerance(params.tolerance);
+                setToleranceManual(params.toleranceManual);
+                setPaletteMode(params.paletteMode);
+            }
+            /*
+              ★★ 关键：**抑制这一次自动重算**。
+              上面回退参数会改 `convertWidth` 等 state，而自动重算 effect 的签名里就有它们
+              ⇒ 不抑制的话 420ms 后会自动重算，把"用户在这个版本上改过的图纸"从源图**覆盖**掉
+              （实测：在 AI 版本上擦掉 39 颗 → 切走再切回 → 1 秒后又变回没擦的 18637 颗）。
+              做法：把签名**按目标版本的参数预演**写进 ref ⇒ effect 比较时认为"没变化"，直接 return。
+              注意 `aiHistory.length` / `sourceTokenRef` 不受切换影响，所以这里用当前值即可。
+            */
+            autoGenerateSignatureRef.current = autoGenerateSignature(params ?? undefined);
+            if (item.style)
+                setAiStyle(item.style);
+            commitHistory(); // ② 压栈（含 paletteMode 那条平行栈），撤销可回到切换前的图
+            updateProject(item.board); // ③ 换图
+            setNoticeIsError(false);
+            setNotice(text.aiVersionRestored(item.isOriginal ? text.aiVersionOriginal : text.aiVersionAi(index)));
+            return;
         }
+        // ② 还没为这一条算过图纸（刚上传的原图 / 刚生成的 AI 图）⇒ 照旧本地重算
         setNotice(item.isOriginal
             ? (language === 'zh' ? '已切回原图，正在出图纸…' : 'Switched back to the original image, rebuilding…')
             : (language === 'zh'
@@ -1743,12 +2085,16 @@ export default function App() {
             setNotice(text.lockedCanvasHint);
             return;
         }
-        // 自动刷新前，若图纸被手动绘制修改过，先征求确认，避免丢失手改内容
-        if (options.automatic && patternHandEdited) {
-            const ok = window.confirm(text.autoRefreshConfirm);
-            if (!ok)
-                return;
-        }
+        /*
+          B50 删除了这里原来的「自动刷新前弹确认框」：
+            if (options.automatic && patternHandEdited) { if (!window.confirm(...)) return; }
+          删除原因（用户 2026-09-26 实测 + 裁决）：
+          · `window.confirm` 在 **DSH 桌面端的侧边栏（内嵌 webview）里被静默拒绝** —— 不弹窗、毫秒级返回 false，
+            于是这里直接 `return`：**不改通知、不报错、界面照常能动、图纸永远不变**。
+            用户看到的就是"切历史/调宽度后一直停在『正在出图纸』"（实测复现，见
+            `_审核\_暂存证据\第B49批-自定义AI接口\弹窗能力实测.md`）。
+          · 用户裁决：不要任何弹窗；修改直接存进当前版本（见 `AiHistoryItem.board`）。
+        */
         const requestId = generationRequestRef.current + 1;
         generationRequestRef.current = requestId;
         const targetLayerId = activeLayer.id;
@@ -1772,7 +2118,10 @@ export default function App() {
                 setNotice(text.aiRedrawRunning);
                 setNoticeIsError(false);
                 try {
-                    const redrawn = await runAiRedraw(pendingFile, (options.model ?? aiModel).trim() || DEFAULT_AI_MODEL, aiStyle);
+                    // B49：模型 ID **按接口分开**（两边的模型名互不通用）；自定义档没填就交给
+                    // runCustomAiRedraw 抛一句明确的话，而不是塞一个方舟的默认模型名过去必然 404。
+                    const chosenModel = (options.model ?? (aiProviderKind === 'custom' ? aiModelCustom : aiModel)).trim();
+                    const redrawn = await runAiRedraw(pendingFile, chosenModel || (aiProviderKind === 'custom' ? '' : DEFAULT_AI_MODEL), aiStyle);
                     sourceFile = redrawn.file;
                     fromAi = true;
                     setAiResultUrl(redrawn.url);
@@ -1782,7 +2131,7 @@ export default function App() {
                         // B45：把「生成这张 AI 图时用的是哪种风格」记进历史 —— 缩略图角标据此显示。
                         // 注意它是 **aiStyle**（AI 卡片的风格），不是 `convertWidth`（参数调节的宽度）：
                         // 两者已解耦，角标要比的是"这张图当时按哪种风格画的"。
-                        const next = [...items, { file: redrawn.file, url: redrawn.url, bg: backgroundMode, style: aiStyle }];
+                        const next = [...items, { file: redrawn.file, url: redrawn.url, bg: backgroundMode, style: aiStyle, boardPending: true }];
                         return next.slice(-AI_HISTORY_LIMIT);
                     });
                     setAiHistoryIndex((current) => {
@@ -1862,12 +2211,27 @@ export default function App() {
                 cells: composeVisibleCells(nextLayers, nextWidth, nextHeight),
             };
             updateProject(nextProject);
+            /*
+              B50：这一版的**第一张图纸**算完了 ⇒ 摘掉 `boardPending`，让快照 effect 把刚算出来的
+              `nextProject` 记进这一条。两句在**同一次批处理**里 ⇒ effect 只会跑一次，看到的是
+              "新图纸 + 已摘标记"的最终状态。
+              按 `file` 定位（而不是下标）：出图用的 `sourceFile` 与追加进历史的那条是**同一个 File 对象**
+              （见 `redrawn.file`），而 `aiHistoryIndex` 在闭包里可能是旧值。
+            */
+            setAiHistory((items) => {
+                const target = items.findIndex((item) => item.file === sourceFile);
+                if (target < 0 || !items[target].boardPending)
+                    return items;
+                const next = items.slice();
+                next[target] = { ...next[target], boardPending: false };
+                return next;
+            });
             // 滑条 = 实际值：把自动校准的结果写回滑条，用户看到的就是真正在用的数
             if (!toleranceManual && result.effectiveTolerance !== undefined && result.effectiveTolerance !== tolerance) {
                 setTolerance(result.effectiveTolerance);
             }
-            // 图纸刚重算过，手改标记清零
-            setPatternHandEdited(false);
+            // B50：这里原来有一句 `setPatternHandEdited(false)`（"图纸刚重算过，手改标记清零"）。
+            // 标记本身已随确认框一起删除；"手改"现在由**当前版本的图纸快照**承载（见 AiHistoryItem.board）。
             setNoticeIsError(false);
             setNotice(language === 'zh'
                 ? `${result.colorsUsed} 色 - ${result.totalBeads} 颗 - 可编辑图案已生成。`
@@ -1882,8 +2246,35 @@ export default function App() {
                 + (error instanceof Error ? error.message : String(error)));
         }
         finally {
-            if (requestId === generationRequestRef.current)
-                setIsGenerating(false);
+            /**
+             * ⚠️ B50：忙碌指示必须**覆盖到重活结束之后**，否则"卡的时候没有提示"。
+             *
+             * 上面 `updateProject()` 引发的 React 提交里要重画 24k 格、整场重建 3D 预览、重算用量、
+             * 序列化 1.2MB 草稿 —— 这些都在**同一帧**里同步跑。而原来紧跟其后就清 `isGenerating`
+             * （它与 `updateProject` 之间**没有 await**，React 打包成同一次提交）⇒
+             * **盖层在真正卡住的那一帧开始之前就消失了**。
+             * 用户实测反馈："切历史很慢，但只有左上角一行小字提示" —— 根因就是这里。
+             * 延后两帧：等 React 提交 + 画布/3D 的 effect 都跑完再撤。
+             *
+             * ⚠️ 但**不能只靠 rAF**：标签页不可见 / 在后台时，rAF 会被节流甚至完全暂停，
+             * 那样 `isGenerating` 会**永远为真** —— 盖层不撤、缩略图和出图按钮永久 `disabled`，
+             * 整站看起来"死了"。这一点在无头 Chrome 里实测到了（B50 门禁 ⑪~⑭ 因为缩略图
+             * 一直 disabled、`click()` 被吞而全部失败）。
+             * 所以 **rAF 与 setTimeout 谁先到谁生效，且只生效一次**：正常情况 rAF 先到（≈2 帧），
+             * 时序异常时超时兜底，绝不会卡住。
+             */
+            let busyCleared = false;
+            const clearBusy = () => {
+                if (busyCleared)
+                    return;
+                busyCleared = true;
+                if (requestId === generationRequestRef.current)
+                    setIsGenerating(false);
+            };
+            if (typeof window.requestAnimationFrame === 'function') {
+                window.requestAnimationFrame(() => window.requestAnimationFrame(clearBusy));
+            }
+            window.setTimeout(clearBusy, 260); // 兜底（≈2 帧的时间）；rAF 正常时它不会赢
         }
     }
     async function importJson(file) {
@@ -2068,6 +2459,11 @@ export default function App() {
             .map((p) => `${p.modelId}: HTTP ${p.httpStatus ?? '-'}${p.code ? ` ${p.code}` : ''}`)
             .join(' | ')}`
         : '';
+    /** B49：自定义接口下，「测试连接」成功时拿到的模型列表（既用于展示，也当模型下拉的候选） */
+    const customModelIds = customProbe.result
+        && (customProbe.result.kind === 'ok' || customProbe.result.kind === 'no-models')
+        ? customProbe.result.modelIds
+        : [];
     // ——————————— 第 3 批：把手机档底部工具条的高度写成 CSS 变量 ———————————
     // 为什么必须**实测**而不是写死：手机档 `.tool-rail` 是 `flex-wrap`，行数由
     // "13 个条目 × 实宽 + 间隙 ↔ 视口宽" 决定 ⇒ 条目数/字号一变，写死的像素就会静默压住浮层
@@ -2561,7 +2957,12 @@ export default function App() {
                         pendingImageUrl && React.createElement("img", { src: pendingImageUrl, alt: "" }),
                         React.createElement("span", { className: "upload-zone-text" },
                             React.createElement("strong", null, isGenerating ? text.preparingPattern : pendingFile ? pendingFile.name : text.uploadImage),
-                            React.createElement("span", null, isGenerating ? pendingFile?.name : pendingFile ? 'PNG / JPG / WebP' : 'PNG, JPG, WebP')))),
+                            React.createElement("span", null, isGenerating ? pendingFile?.name : pendingFile ? 'PNG / JPG / WebP' : 'PNG, JPG, WebP'))),
+                    canRecover && !pendingFile && !hasPatternContent && (React.createElement("button", { type: "button", className: "recover-draft", onClick: () => void recoverSavedDraft() },
+                        React.createElement("span", { className: "recover-draft-icon", "aria-hidden": "true" }, "\u21BA"),
+                        React.createElement("span", { className: "recover-draft-text" },
+                            React.createElement("strong", null, text.recoverLastPattern),
+                            React.createElement("small", null, text.recoverLastPatternHint))))),
                 React.createElement("section", { className: "left-card ai-card" },
                     React.createElement("div", { className: "left-card-header" },
                         React.createElement("div", null,
@@ -2581,51 +2982,110 @@ export default function App() {
                         React.createElement("select", { "aria-label": "AI background handling", value: backgroundMode, onChange: (event) => setBackgroundMode(event.target.value) },
                             React.createElement("option", { value: "keep" }, text.keepBackground),
                             React.createElement("option", { value: "remove-white" }, text.removeWhite))),
-                    React.createElement("label", { className: "ai-field-row ai-field-row--key" },
-                        React.createElement("span", null, text.aiRedrawKeyLabel),
-                        React.createElement("input", { type: "password", value: aiApiKey, placeholder: text.aiRedrawKeyPlaceholder, onChange: (event) => {
-                                const value = event.target.value;
-                                setAiApiKey(value);
-                                localStorage.setItem('ark-api-key', value);
-                            } })),
-                    React.createElement("div", { className: `ai-detect is-${arkDetect.phase === 'running' ? 'running' : arkDetect.phase === 'done' && arkDetect.result.kind === 'found' ? 'ok' : 'warn'}` },
-                        React.createElement("p", { className: "ai-detect-status" },
-                            arkDetect.phase === 'running' && text.arkDetectRunning,
-                            arkDetect.phase === 'done' && arkDetect.result.kind === 'found'
-                                && `${text.arkDetectFound}${arkDetect.result.modelId}${text.arkDetectFoundTail}`
-                                    + `　·　${text.arkTierName(arkDetect.result.tier)}`,
-                            arkDetect.phase === 'done' && arkDetect.result.kind === 'none'
-                                && arkDetect.result.probes[arkDetect.result.probes.length - 1]?.status === 'model-not-open'
-                                && `${text.arkDetectNotOpen}　·　${text.arkTierName(arkDetect.result.tier)}`,
-                            arkDetect.phase === 'done' && arkDetect.result.kind === 'none'
-                                && arkDetect.result.probes[arkDetect.result.probes.length - 1]?.status === 'model-not-found'
-                                && `${text.arkDetectNotFound}　·　${text.arkTierName(arkDetect.result.tier)}`,
-                            arkDetect.phase === 'done' && arkDetect.result.kind === 'none'
-                                && !['model-not-found', 'model-not-open'].includes(String(arkDetect.result.probes[arkDetect.result.probes.length - 1]?.status))
-                                && text.arkDetectNotOpen,
-                            arkDetect.phase === 'done' && arkDetect.result.kind === 'error' && text.arkDetectBadKey,
-                            arkDetect.phase === 'idle' && (looksLikeArkKey(aiApiKey) ? text.arkDetectHint : text.arkDetectNeedKey)),
-                        React.createElement("div", { className: "ai-detect-row" },
-                            React.createElement("button", { type: "button", className: "ai-detect-retry", disabled: arkDetect.phase === 'running' || !looksLikeArkKey(aiApiKey), onClick: () => { void runArkDetect(aiApiKey); } }, text.arkDetectRetry),
-                            arkStatusLink && (React.createElement("a", { className: "ai-detect-link", href: ARK_LINKS[arkStatusLink], target: "_blank", rel: "noreferrer" }, arkStatusLink === 'apiKey' ? text.arkDetectGetKey : text.arkDetectGetModel))),
-                        arkDetect.phase === 'done' && arkDetect.result.kind === 'error' && (React.createElement("small", { className: "ai-detect-raw" }, arkDetect.result.detail || formatRawBits(arkDetect.result.probes[arkDetect.result.probes.length - 1].raw))),
-                        arkSuggestLine && React.createElement("small", { className: "ai-detect-raw" }, arkSuggestLine)),
-                    React.createElement("div", { className: "ai-model-block is-always" },
-                        React.createElement("div", { className: "ai-model-head" },
-                            React.createElement("span", { className: "ai-model-head-label" }, text.aiModelLabel),
-                            aiModelAuto && React.createElement("em", { className: "ai-model-auto" }, text.arkDetectAuto),
-                            React.createElement("button", { type: "button", className: "ai-model-more", "aria-expanded": aiModelOpen, onClick: () => setAiModelOpen((v) => !v) },
-                                text.aiModelMore,
+                    React.createElement("div", { className: "ai-advanced" },
+                        React.createElement("div", { className: "ai-adv-head" },
+                            React.createElement("button", { type: "button", className: "ai-adv-toggle", "aria-expanded": aiAdvancedOpen, onClick: () => setAiAdvancedOpen((v) => !v) },
+                                text.aiAdvanced,
                                 " ",
-                                aiModelOpen ? '▴' : '▾')),
-                        React.createElement("input", { "aria-label": "Ark model id", list: "ark-model-presets", value: aiModel, placeholder: DEFAULT_AI_MODEL, onChange: (event) => {
-                                const value = event.target.value;
-                                setAiModel(value);
-                                setAiModelAuto(false);
-                                localStorage.setItem('ark-model', value);
-                            } }),
-                        React.createElement("datalist", { id: "ark-model-presets" }, ARK_MODEL_CANDIDATES.map((m) => React.createElement("option", { key: m, value: m }))),
-                        aiModelOpen && React.createElement("small", null, text.aiModelHint)),
+                                aiAdvancedOpen ? '▴' : '▾'),
+                            React.createElement("em", { className: `ai-adv-status is-${aiProviderKind === 'custom'
+                                    ? (normalizeBaseUrl(aiBaseUrl) && aiApiKey.trim() ? 'ok' : 'warn')
+                                    : (aiApiKey.trim() ? 'ok' : 'warn')}` }, aiProviderKind === 'custom'
+                                ? (normalizeBaseUrl(aiBaseUrl) && aiApiKey.trim() ? text.aiAdvCustomReady : text.aiAdvNeedConfig)
+                                : (aiApiKey.trim() ? text.aiAdvArkReady : text.aiAdvNeedKey))),
+                        aiAdvancedOpen && (React.createElement("div", { className: "ai-adv-body" },
+                            React.createElement("label", { className: "ai-field-row" },
+                                React.createElement("span", null, text.aiProviderLabel),
+                                React.createElement("select", { "aria-label": "AI provider", value: aiProviderKind, onChange: (event) => {
+                                        const next = event.target.value === 'custom' ? 'custom' : 'ark';
+                                        setAiProviderKind(next);
+                                        localStorage.setItem('ark-provider', next);
+                                        setCustomProbe({ phase: 'idle' });
+                                    } },
+                                    React.createElement("option", { value: "ark" }, text.aiProviderArk),
+                                    React.createElement("option", { value: "custom" }, text.aiProviderCustom))),
+                            aiProviderKind === 'custom' && (React.createElement("label", { className: "ai-field-row ai-field-row--url" },
+                                React.createElement("span", null, text.aiBaseUrlLabel),
+                                React.createElement("input", { "aria-label": "Custom API base URL", value: aiBaseUrl, placeholder: text.aiBaseUrlPlaceholder, onChange: (event) => {
+                                        const value = event.target.value;
+                                        setAiBaseUrl(value);
+                                        localStorage.setItem('ark-base-url', value);
+                                    } }))),
+                            React.createElement("label", { className: "ai-field-row ai-field-row--key" },
+                                React.createElement("span", null, text.aiRedrawKeyLabel),
+                                React.createElement("input", { type: "password", value: aiApiKey, placeholder: aiProviderKind === 'custom' ? text.aiCustomKeyPlaceholder : text.aiRedrawKeyPlaceholder, onChange: (event) => {
+                                        const value = event.target.value;
+                                        setAiApiKey(value);
+                                        localStorage.setItem('ark-api-key', value);
+                                    } })),
+                            aiProviderKind === 'ark' ? (React.createElement(React.Fragment, null,
+                                React.createElement("div", { className: `ai-detect is-${arkDetect.phase === 'running' ? 'running' : arkDetect.phase === 'done' && arkDetect.result.kind === 'found' ? 'ok' : 'warn'}` },
+                                    React.createElement("p", { className: "ai-detect-status" },
+                                        arkDetect.phase === 'running' && text.arkDetectRunning,
+                                        arkDetect.phase === 'done' && arkDetect.result.kind === 'found'
+                                            && `${text.arkDetectFound}${arkDetect.result.modelId}${text.arkDetectFoundTail}`
+                                                + `　·　${text.arkTierName(arkDetect.result.tier)}`,
+                                        arkDetect.phase === 'done' && arkDetect.result.kind === 'none'
+                                            && arkDetect.result.probes[arkDetect.result.probes.length - 1]?.status === 'model-not-open'
+                                            && `${text.arkDetectNotOpen}　·　${text.arkTierName(arkDetect.result.tier)}`,
+                                        arkDetect.phase === 'done' && arkDetect.result.kind === 'none'
+                                            && arkDetect.result.probes[arkDetect.result.probes.length - 1]?.status === 'model-not-found'
+                                            && `${text.arkDetectNotFound}　·　${text.arkTierName(arkDetect.result.tier)}`,
+                                        arkDetect.phase === 'done' && arkDetect.result.kind === 'none'
+                                            && !['model-not-found', 'model-not-open'].includes(String(arkDetect.result.probes[arkDetect.result.probes.length - 1]?.status))
+                                            && text.arkDetectNotOpen,
+                                        arkDetect.phase === 'done' && arkDetect.result.kind === 'error' && text.arkDetectBadKey,
+                                        arkDetect.phase === 'idle' && (looksLikeArkKey(aiApiKey) ? text.arkDetectHint : text.arkDetectNeedKey)),
+                                    React.createElement("div", { className: "ai-detect-row" },
+                                        React.createElement("button", { type: "button", className: "ai-detect-retry", disabled: arkDetect.phase === 'running' || !looksLikeArkKey(aiApiKey), onClick: () => { void runArkDetect(aiApiKey); } }, text.arkDetectRetry),
+                                        arkStatusLink && (React.createElement("a", { className: "ai-detect-link", href: ARK_LINKS[arkStatusLink], target: "_blank", rel: "noreferrer" }, arkStatusLink === 'apiKey' ? text.arkDetectGetKey : text.arkDetectGetModel))),
+                                    arkDetect.phase === 'done' && arkDetect.result.kind === 'error' && (React.createElement("small", { className: "ai-detect-raw" }, arkDetect.result.detail || formatRawBits(arkDetect.result.probes[arkDetect.result.probes.length - 1].raw))),
+                                    arkSuggestLine && React.createElement("small", { className: "ai-detect-raw" }, arkSuggestLine)))) : (React.createElement(React.Fragment, null,
+                                React.createElement("div", { className: `ai-detect is-${customProbe.phase === 'running' ? 'running' : customProbe.phase === 'done' && customProbe.result?.kind === 'ok' ? 'ok' : 'warn'}` },
+                                    React.createElement("p", { className: "ai-detect-status" },
+                                        customProbe.phase === 'running' && text.aiTestRunning,
+                                        customProbe.phase === 'idle' && text.aiTestHint,
+                                        customProbe.phase === 'done' && customProbe.result?.kind === 'ok'
+                                            && text.aiTestOk(customProbe.result.modelIds.length),
+                                        customProbe.phase === 'done' && customProbe.result?.kind === 'no-models' && text.aiTestNoModels,
+                                        customProbe.phase === 'done' && customProbe.result?.kind === 'bad-url' && text.aiTestBadUrl,
+                                        customProbe.phase === 'done' && customProbe.result?.kind === 'error' && text.aiTestFailed),
+                                    React.createElement("div", { className: "ai-detect-row" },
+                                        React.createElement("button", { type: "button", className: "ai-detect-retry", disabled: customProbe.phase === 'running' || !aiBaseUrl.trim(), onClick: () => { void runCustomProbe(); } }, text.aiTestConn)),
+                                    customProbe.phase === 'done' && customProbe.result?.kind === 'error' && (React.createElement("small", { className: "ai-detect-raw" },
+                                        "HTTP ",
+                                        customProbe.result.httpStatus ?? '—',
+                                        "\u3000",
+                                        customProbe.result.message)),
+                                    customModelIds.length > 0 && (React.createElement("small", { className: "ai-detect-raw" },
+                                        text.aiTestModels,
+                                        "\uFF1A",
+                                        customModelIds.slice(0, 10).join('、'))),
+                                    React.createElement("small", { className: "ai-detect-raw" }, text.aiCustomHint)))),
+                            React.createElement("div", { className: "ai-model-block is-always" },
+                                React.createElement("div", { className: "ai-model-head" },
+                                    React.createElement("span", { className: "ai-model-head-label" }, text.aiModelLabel),
+                                    aiProviderKind === 'ark' && aiModelAuto && React.createElement("em", { className: "ai-model-auto" }, text.arkDetectAuto),
+                                    React.createElement("button", { type: "button", className: "ai-model-more", "aria-expanded": aiModelOpen, onClick: () => setAiModelOpen((v) => !v) },
+                                        text.aiModelMore,
+                                        " ",
+                                        aiModelOpen ? '▴' : '▾')),
+                                aiProviderKind === 'custom' ? (React.createElement(React.Fragment, null,
+                                    React.createElement("input", { "aria-label": "Custom model id", list: "custom-model-presets", value: aiModelCustom, placeholder: text.aiCustomModelPlaceholder, onChange: (event) => {
+                                            const value = event.target.value;
+                                            setAiModelCustom(value);
+                                            localStorage.setItem('ark-model-custom', value);
+                                        } }),
+                                    React.createElement("datalist", { id: "custom-model-presets" }, customModelIds.map((m) => React.createElement("option", { key: m, value: m }))),
+                                    aiModelOpen && React.createElement("small", null, text.aiCustomModelHint))) : (React.createElement(React.Fragment, null,
+                                    React.createElement("input", { "aria-label": "Ark model id", list: "ark-model-presets", value: aiModel, placeholder: DEFAULT_AI_MODEL, onChange: (event) => {
+                                            const value = event.target.value;
+                                            setAiModel(value);
+                                            setAiModelAuto(false);
+                                            localStorage.setItem('ark-model', value);
+                                        } }),
+                                    React.createElement("datalist", { id: "ark-model-presets" }, ARK_MODEL_CANDIDATES.map((m) => React.createElement("option", { key: m, value: m }))),
+                                    aiModelOpen && React.createElement("small", null, text.aiModelHint))))))),
                     React.createElement("div", { className: "ai-source-row" },
                         aiResultUrl ? (React.createElement("img", { className: "ai-redraw-thumb", src: aiResultUrl, alt: "" })) : (React.createElement("span", { className: "ai-redraw-thumb is-empty", "aria-hidden": "true" })),
                         aiHistory.length > 0 && (React.createElement("div", { className: "ai-history" },
@@ -2637,7 +3097,8 @@ export default function App() {
                                     : `${text.aiHistoryTitle} ${index} · ${item.bg === 'keep' ? text.keepBackground : text.removeWhite}`, disabled: aiRedrawing || isGenerating, onClick: () => selectHistoryEntry(index) },
                                 React.createElement("img", { src: item.url, alt: item.isOriginal ? text.aiHistoryOriginal : `${index}` }),
                                 !item.isOriginal && item.style != null && (React.createElement("span", { className: `ai-history-w${item.style !== aiStyle ? ' is-stale' : ''}`, title: `${text.aiStyleBadge(item.style)}${item.style !== aiStyle ? ` · ${text.aiStyleStale}（${text.aiStyleBadge(aiStyle)}）` : ''}` }, text.aiStyleBadge(item.style))),
-                                React.createElement("span", { className: "ai-history-no" }, item.isOriginal ? text.aiHistoryOriginalShort : index)))))))),
+                                React.createElement("span", { className: "ai-history-no" }, item.isOriginal ? text.aiHistoryOriginalShort : index))))),
+                            aiHistory.length > 1 && (React.createElement("p", { className: "ai-history-ephemeral" }, text.aiVersionEphemeral))))),
                     aiRedrawing && (React.createElement("div", { className: "ai-redraw-progress" },
                         React.createElement("span", { className: "ai-redraw-spinner" }),
                         React.createElement("strong", null, text.aiRedrawRunning))),

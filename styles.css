@@ -1061,6 +1061,50 @@ button:focus-visible {
   gap: 3px;
 }
 
+/* B50-c：默认每次打开都是空白，草稿留作后悔药 ⇒ 上传卡片里那个"主动找回"入口。
+   刻意做得低调（虚线、灰字），它只是后悔药，不该抢上传按钮的注意力。 */
+.recover-draft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px dashed #c9c3b4;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.6);
+  color: #4b5563;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recover-draft:hover {
+  border-color: #8fa6c8;
+  background: rgba(240, 245, 252, 0.9);
+}
+
+.recover-draft-icon {
+  font-size: 18px;
+  line-height: 1;
+  color: #6b7280;
+}
+
+.recover-draft-text {
+  display: grid;
+  gap: 1px;
+}
+
+.recover-draft-text strong {
+  font-size: var(--font-size-body);
+  font-weight: var(--weight-semibold);
+}
+
+.recover-draft-text small {
+  color: #8a8f98;
+  font-size: var(--font-size-caption);
+  line-height: 1.3;
+}
+
 /* AI 重绘历史：多次重绘后回来挑最好的一张 */
 .ai-history {
   display: grid;
@@ -1090,6 +1134,14 @@ button:focus-visible {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
+}
+
+/* B50：版本历史是内存态（刷新即清空）的常驻小字提示。压低存在感，不要抢缩略图的注意力 */
+.ai-history-ephemeral {
+  margin: 0;
+  color: #8a8f98;
+  font-size: var(--font-size-caption);
+  line-height: 1.35;
 }
 
 .ai-history-item {
@@ -5041,6 +5093,58 @@ button:focus-visible {
 }
 
 /* 模型设置：输入框一直可见，点「手动指定」才展开说明 */
+/* ——— B49：高级设置折叠（接口 / 地址 / API Key / 模型 / 识别·测试状态）———
+   常显部分（出图风格 · AI 图的背景 · 结果历史 · 开始生图）在上面，这块默认收起。
+   默认展开规则写在 App.tsx：**没填 Key 就展开**，否则新用户找不到填 Key 的地方。 */
+.ai-advanced {
+  display: grid;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line-strong);
+}
+
+.ai-adv-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-adv-toggle {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: #555;
+  font-size: var(--font-size-small);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+.ai-adv-toggle:hover {
+  color: #2b64b4;
+}
+}
+
+/* 状态摘要：一句就够（左栏实测只有 269px 宽，长了会被截断） */
+.ai-adv-status {
+  margin-left: auto;
+  font-style: normal;
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+}
+
+.ai-adv-status.is-ok {
+  color: #21703a;
+}
+
+.ai-adv-status.is-warn {
+  color: #a15c00;
+}
+
+.ai-adv-body {
+  display: grid;
+  gap: 6px;
+}
+
 .ai-model-block {
   display: grid;
   gap: 4px;
@@ -6827,6 +6931,41 @@ body {
 }
 .workspace-generating .generating-heart-grid { --gh-cell: 18px; }
 
+/* —— B50：立刻可见的忙碌提示（心形要 ~2.2 秒才画完，短等待会看起来"没反应"）—— */
+.workspace-busy-wrap {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+}
+
+.workspace-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .94);
+  color: #4b5563;
+  font-size: 13px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .06);
+}
+
+/* 无延迟的转圈：不依赖任何入场延迟 ⇒ 盖层出现的第一帧就在动 */
+.workspace-spinner {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(23, 101, 106, .25);
+  border-top-color: #17656a;
+  border-radius: 50%;
+  animation: wsSpin 700ms linear infinite;
+}
+
+@keyframes wsSpin {
+  to { transform: rotate(360deg); }
+}
+
 /* 无障碍：开了「减少动态效果」就不逐格演、不心跳，直接静态显示完整心形 */
 @media (prefers-reduced-motion: reduce) {
   .generating-heart-bead {
@@ -6837,4 +6976,6 @@ body {
   .generating-heart-beat { animation: none; }
   .generating-heart-label .dots::after { content: '...'; animation: none; }
   .workspace-generating { animation: none; }
+  /* B50：转圈也停（但保留圆环本身，仍能看出"在忙"） */
+  .workspace-spinner { animation: none; border-top-color: rgba(23, 101, 106, .25); }
 }

@@ -378,13 +378,34 @@ export function hexToRgb(hex) {
     const value = Number.parseInt(normalized, 16);
     return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
 }
+/**
+ * `completePalette` 的 **id → 颜色** 索引（性能修复，2026-09-25）。
+ *
+ * 为什么需要：`getColor` 原来是 `completePalette.find(...)` —— **每次调用扫 291 条**。
+ * 而它在最热的路径上：画布每画一颗豆的色号就调一次（`App.displayCodeById`），
+ * 52×78 的板子一次重绘约 2900 次，实测每次重绘在这上面花约 1ms，且随板子变大线性增长
+ * （156×156 时每颗豆一次、量级再上一个台阶）。
+ *
+ * 为什么可以建一次就够：`completePalette` 是模块级 `const`，全仓**只有读取**
+ * （没有 push/splice/重新赋值；`paletteVersion` 也是常量 `'mard-291-v1'`）⇒ 内容不会变。
+ *
+ * ⚠️ 必须**首次写入优先**，不能写 `new Map(completePalette.map((c) => [c.id, c]))`：
+ *    原来用的是 `Array.prototype.find`（取**第一个**匹配），而 `new Map(数组)` 遇到重复 id
+ *    会保留**最后一个** ⇒ 语义会悄悄变。当前 291 个 id 无重复，但等价性不能建立在
+ *    "数据恰好没重复"上。已用 291 个 id + 大写变体 + 不存在的 id + 空串/null/undefined
+ *    共 589 个探针对拍过：新旧返回**同一个对象引用**。
+ */
+const completePaletteById = new Map();
+for (const color of completePalette) {
+    if (!completePaletteById.has(color.id))
+        completePaletteById.set(color.id, color);
+}
 export function getColor(id) {
     if (!id)
         return undefined;
-    const own = completePalette.find((color) => color.id === id);
-    if (own)
-        return own;
-    return extraColorRegistry.get(id);
+    // 顺序与原实现一致：**先 MARD 的 291 色，再附加品牌色注册表**（`??` 天然就是这个优先级）。
+    // 两处都有同一个 id 时返回 MARD 那个 —— 与原 `find` 先命中的行为相同。
+    return completePaletteById.get(id) ?? extraColorRegistry.get(id);
 }
 // ------------------------------------------------- 附加品牌色（W3.3c 换品牌用）
 //
@@ -395,7 +416,8 @@ export function getColor(id) {
 // 所以这里用「注册表 + 一个 setter」的方式扩展，而不是把 `brands.ts` 的色板 import 进来
 // （那还会造成 palette ↔ brands 循环依赖）。
 //
-// ⚠️ 空表时 `getColor` 的行为与改动前**逐字一致**：先线性查 MARD 的 291 色，查不到才看这张表。
+// ⚠️ 空表时 `getColor` 的行为与改动前**逐字一致**：先查 MARD 的 291 色（现在是 O(1) 的 Map，
+//    结果与原来的线性查找逐个对象引用相同），查不到才看这张表。
 // 注册表按 id 去重，重复注册不会让表变大。
 const extraColorRegistry = new Map();
 export function setExtraPaletteColors(colors) {

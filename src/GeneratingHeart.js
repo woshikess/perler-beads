@@ -41,6 +41,6 @@ export default function GeneratingHeart({ label }) {
                         animationDuration: `260ms, ${OUTLINE_MS}ms, ${CYCLE_MS}ms`,
                     } }));
             }))),
-        React.createElement("div", { className: "generating-heart-label" }, label)));
+        label ? React.createElement("div", { className: "generating-heart-label" }, label) : null));
 }
 //# sourceMappingURL=GeneratingHeart.js.map
