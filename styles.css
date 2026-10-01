@@ -5286,6 +5286,97 @@ button:focus-visible {
   cursor: pointer;
 }
 
+/* B52：模型候选列表（替代原生 datalist）+「模型不在本地址列表里」的警告条 */
+.ai-model-choices {
+  display: grid;
+  gap: 4px;
+}
+
+.ai-model-choices-toggle {
+  justify-self: start;
+  border: 1px solid #d8d2c4;
+  border-radius: 6px;
+  background: #fbfaf6;
+  color: #55503f;
+  font-size: var(--font-size-caption);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.ai-model-choices-toggle:hover {
+  border-color: #a9b8ce;
+  color: #2b64b4;
+}
+
+.ai-model-choice-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 132px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid #e2ddd0;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.ai-model-choice {
+  border: 1px solid #d8d2c4;
+  border-radius: 999px;
+  background: #fff;
+  color: #4b5563;
+  font-size: var(--font-size-caption);
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ai-model-choice:hover {
+  border-color: #a9b8ce;
+  background: #f2f7fd;
+}
+
+/* 像"画图的"模型给个记号，省得在 9 个名字里挑 */
+.ai-model-choice.is-image::before {
+  content: '🎨 ';
+}
+
+.ai-model-choice.is-current {
+  border-color: #2b64b4;
+  background: #eaf1fa;
+  color: #1f4f93;
+  font-weight: var(--weight-semibold);
+}
+
+.ai-model-stale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid #e6c98a;
+  border-radius: 6px;
+  background: #fdf6e6;
+  color: #7a5a12;
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+}
+
+.ai-model-stale-fix {
+  border: 1px solid #c9a54e;
+  border-radius: 6px;
+  background: #fff;
+  color: #7a5a12;
+  font-size: var(--font-size-caption);
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.ai-model-stale-fix:hover {
+  background: #fff8e6;
+}
+
 @media (hover: hover) {
 .ai-model-more:hover {
   color: #2b64b4;

@@ -3,7 +3,7 @@ import ThreePreview from './ThreePreview.js';
 import { AI_REDRAW_TIMEOUT_MS, buildPrompt, calcSize } from './arkDirect.js';
 import { DEFAULT_ARK_TIER, arkImagesEndpoint, isArkTier, orderArkTiers, } from './arkEndpoints.js';
 import { ARK_LINKS, ARK_MODEL_CANDIDATES, detectActivatedModel, formatRawBits } from './arkDiagnostics.js';
-import { buildCustomRequest, fetchImageAsDataUrl, isCustomShape, normalizeBaseUrl, orderCustomShapes, parseImageResponse, probeCustomEndpoint, } from './aiProvider.js';
+import { buildCustomRequest, fetchImageAsDataUrl, isCustomShape, looksLikeImageModel, normalizeBaseUrl, orderCustomShapes, parseImageResponse, probeCustomEndpoint, explainProviderError, } from './aiProvider.js';
 import { downloadPrintPdf, downloadPrintPng, downloadProjectJson, downloadUsageWorkbook } from './exporters.js';
 import { imageFileToBeads } from './imageToBeads.js';
 // B36：主体分割模型（MediaPipe Selfie Multiclass）。打开页面就开始后台加载，失败则静默走老算法。
@@ -378,6 +378,26 @@ export default function App() {
     const [aiModelCustom, setAiModelCustom] = useState(() => localStorage.getItem('ark-model-custom') ?? '');
     /** 「测试连接」的结论（只走免费的 `GET /models`，绝不发会生成图片的请求） */
     const [customProbe, setCustomProbe] = useState({ phase: 'idle' });
+    /** B52：模型候选列表的展开状态（原生 datalist 在"框里的字一个都不匹配"时看起来是坏的，换成真列表） */
+    const [aiModelChoiceOpen, setAiModelChoiceOpen] = useState(false);
+    /**
+     * B52：**换地址就清掉上一个地址的模型**。
+     *
+     * 实测过的串台（2026-09-29）：在 A 站选了 `gpt-image-2.5-sunburst`，切回 openox 后请求仍带这个名字
+     * ⇒ `403 model not allowed for this api key`，而界面上"测试连接"是成功的（它只读模型列表、不校验权限）
+     * ⇒ 用户完全看不出是模型名的问题。模型名是**每家服务自己的**，跨地址复用没有意义，所以直接清掉。
+     * 旧地址的探测结论（模型列表）也一并作废，否则候选列表还是别家的名字。
+     */
+    const customModelAddressRef = useRef(aiBaseUrl);
+    useEffect(() => {
+        if (customModelAddressRef.current === aiBaseUrl)
+            return;
+        customModelAddressRef.current = aiBaseUrl;
+        setAiModelCustom('');
+        localStorage.removeItem('ark-model-custom');
+        setCustomProbe({ phase: 'idle' });
+        setAiModelChoiceOpen(false);
+    }, [aiBaseUrl]);
     /**
      * 「高级设置」折叠状态。
      *
@@ -1791,8 +1811,17 @@ export default function App() {
                 const retriable = resp.status === 404 || resp.status === 405
                     || (resp.status === 400 && /image|param|unsupported|unknown|not support/i.test(result.message));
                 if (!retriable) {
+                    // B52：服务侧的报错要给出**可执行的下一步**（否则用户只能看到服务原话，不知道从哪改）
+                    const code = explainProviderError(result.message, resp.status);
+                    const hint = code === 'model-not-allowed' ? text.aiHintModelNotAllowed
+                        : code === 'no-accounts' ? text.aiHintNoAccounts
+                            : code === 'quota' ? text.aiHintQuota
+                                : code === 'bad-key' ? text.aiHintBadKey
+                                    : code === 'service-down' ? text.aiHintServiceDown
+                                        : '';
                     throw new Error(`AI 重绘失败：${result.message}（HTTP ${resp.status}）。`
-                        + '这一版不会自动换形状重试——上面的 message 是服务原话，照它改 Key／模型／地址。');
+                        + (hint ? `\n提示：${hint}` : '')
+                        + '\n这一版不会自动换形状重试——上面的 message 是服务原话，照它改 Key／模型／地址。');
                 }
             }
             if (!parsed || !usedShape) {
@@ -2464,6 +2493,15 @@ export default function App() {
         && (customProbe.result.kind === 'ok' || customProbe.result.kind === 'no-models')
         ? customProbe.result.modelIds
         : [];
+    /**
+     * B52：当前填的模型**不在**这个地址的候选列表里（且列表是有效探测结果）。
+     * 命中的典型场景 = 上一家服务的模型名还留在框里 ⇒ 请求必然 403，但用户从界面上看不出来。
+     */
+    const customModelStale = customModelIds.length > 0
+        && aiModelCustom.trim() !== ''
+        && !customModelIds.includes(aiModelCustom.trim());
+    /** 一键改用：优先挑一个像"画图的"（`looksLikeImageModel`），没有就用第一个 */
+    const customModelSuggested = customModelIds.find(looksLikeImageModel) ?? customModelIds[0] ?? '';
     // ——————————— 第 3 批：把手机档底部工具条的高度写成 CSS 变量 ———————————
     // 为什么必须**实测**而不是写死：手机档 `.tool-rail` 是 `flex-wrap`，行数由
     // "13 个条目 × 实宽 + 间隙 ↔ 视口宽" 决定 ⇒ 条目数/字号一变，写死的像素就会静默压住浮层
@@ -3071,12 +3109,30 @@ export default function App() {
                                         " ",
                                         aiModelOpen ? '▴' : '▾')),
                                 aiProviderKind === 'custom' ? (React.createElement(React.Fragment, null,
-                                    React.createElement("input", { "aria-label": "Custom model id", list: "custom-model-presets", value: aiModelCustom, placeholder: text.aiCustomModelPlaceholder, onChange: (event) => {
+                                    React.createElement("input", { "aria-label": "Custom model id", value: aiModelCustom, placeholder: text.aiCustomModelPlaceholder, onChange: (event) => {
                                             const value = event.target.value;
                                             setAiModelCustom(value);
                                             localStorage.setItem('ark-model-custom', value);
                                         } }),
-                                    React.createElement("datalist", { id: "custom-model-presets" }, customModelIds.map((m) => React.createElement("option", { key: m, value: m }))),
+                                    customModelIds.length > 0 && (React.createElement("div", { className: "ai-model-choices" },
+                                        React.createElement("button", { type: "button", className: "ai-model-choices-toggle", "aria-expanded": aiModelChoiceOpen, onClick: () => setAiModelChoiceOpen((v) => !v) },
+                                            text.aiModelChoose,
+                                            "\uFF08",
+                                            customModelIds.length,
+                                            "\uFF09",
+                                            aiModelChoiceOpen ? ' ▴' : ' ▾'),
+                                        (aiModelChoiceOpen || customModelStale) && (React.createElement("div", { className: "ai-model-choice-list" }, customModelIds.map((m) => (React.createElement("button", { key: m, type: "button", className: `ai-model-choice${m === aiModelCustom.trim() ? ' is-current' : ''}${looksLikeImageModel(m) ? ' is-image' : ''}`, onClick: () => {
+                                                setAiModelCustom(m);
+                                                localStorage.setItem('ark-model-custom', m);
+                                                setAiModelChoiceOpen(false);
+                                            } }, m))))))),
+                                    customModelStale && (React.createElement("p", { className: "ai-model-stale" },
+                                        text.aiModelStaleWarning(aiModelCustom.trim()),
+                                        customModelSuggested && (React.createElement("button", { type: "button", className: "ai-model-stale-fix", onClick: () => {
+                                                setAiModelCustom(customModelSuggested);
+                                                localStorage.setItem('ark-model-custom', customModelSuggested);
+                                                setAiModelChoiceOpen(false);
+                                            } }, text.aiModelUseInstead(customModelSuggested))))),
                                     aiModelOpen && React.createElement("small", null, text.aiCustomModelHint))) : (React.createElement(React.Fragment, null,
                                     React.createElement("input", { "aria-label": "Ark model id", list: "ark-model-presets", value: aiModel, placeholder: DEFAULT_AI_MODEL, onChange: (event) => {
                                             const value = event.target.value;

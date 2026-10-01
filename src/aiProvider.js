@@ -187,6 +187,26 @@ export function parseImageResponse(httpStatus, bodyText) {
     };
 }
 /**
+ * 把服务返回的 message 归到上面那几个码。**不认识就返回 `null`**（调用方原样显示服务原文，不二次加工）。
+ */
+export function explainProviderError(message, httpStatus) {
+    const text = String(message ?? '');
+    // ⚠️ 顺序有意义：`No available compatible accounts` 也带 503，必须先被下面这条抓走
+    if (/model[_ ]?not[_ ]?allowed|not allowed for this (api )?key|model not permitted/i.test(text))
+        return 'model-not-allowed';
+    if (/no available compatible accounts|no available channel|no available accounts|无可用渠道|无可用账号/i.test(text))
+        return 'no-accounts';
+    if (/quota|insufficient|balance|billing|余额|欠费|额度/i.test(text))
+        return 'quota';
+    if (httpStatus === 401 || /unauthorized|invalid api key|incorrect api key/i.test(text))
+        return 'bad-key';
+    if (/service temporarily unavailable|bad gateway|gateway time-?out/i.test(text))
+        return 'service-down';
+    if (httpStatus >= 502 && httpStatus <= 504)
+        return 'service-down';
+    return null;
+}
+/**
  * 拿到 `url` 形状的响应时，把它抓成 dataURL 才能进拼豆管线。
  * 抓不到（图床不允许跨域）就抛错，由调用方给出**明确**提示，而不是笼统说"失败"。
  */
