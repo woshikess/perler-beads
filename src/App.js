@@ -3,7 +3,7 @@ import ThreePreview from './ThreePreview.js';
 import { AI_REDRAW_TIMEOUT_MS, buildPrompt, calcSize } from './arkDirect.js';
 import { DEFAULT_ARK_TIER, arkImagesEndpoint, isArkTier, orderArkTiers, } from './arkEndpoints.js';
 import { ARK_LINKS, ARK_MODEL_CANDIDATES, detectActivatedModel, formatRawBits } from './arkDiagnostics.js';
-import { buildCustomRequest, fetchImageAsDataUrl, isCustomShape, looksLikeImageModel, normalizeBaseUrl, orderCustomShapes, parseImageResponse, probeCustomEndpoint, explainProviderError, } from './aiProvider.js';
+import { buildCustomRequest, fetchImageAsDataUrl, imageCapableModelIds, isCustomShape, looksLikeImageModel, normalizeBaseUrl, orderCustomShapes, parseImageResponse, probeCustomEndpoint, explainProviderError, } from './aiProvider.js';
 import { downloadPrintPdf, downloadPrintPng, downloadProjectJson, downloadUsageWorkbook } from './exporters.js';
 import { imageFileToBeads } from './imageToBeads.js';
 // B36：主体分割模型（MediaPipe Selfie Multiclass）。打开页面就开始后台加载，失败则静默走老算法。
@@ -378,15 +378,18 @@ export default function App() {
     const [aiModelCustom, setAiModelCustom] = useState(() => localStorage.getItem('ark-model-custom') ?? '');
     /** 「测试连接」的结论（只走免费的 `GET /models`，绝不发会生成图片的请求） */
     const [customProbe, setCustomProbe] = useState({ phase: 'idle' });
-    /** B52：模型候选列表的展开状态（原生 datalist 在"框里的字一个都不匹配"时看起来是坏的，换成真列表） */
-    const [aiModelChoiceOpen, setAiModelChoiceOpen] = useState(false);
+    /**
+     * B52-b（用户复核后改的口径）：模型**只给下拉、不给自由输入**。
+     * `true` = 当前这个模型是探测成功后**自动选中**的（不是用户自己点的），用于下面那行小字。
+     */
+    const [aiModelAutoPicked, setAiModelAutoPicked] = useState(false);
     /**
      * B52：**换地址就清掉上一个地址的模型**。
      *
      * 实测过的串台（2026-09-29）：在 A 站选了 `gpt-image-2.5-sunburst`，切回 openox 后请求仍带这个名字
      * ⇒ `403 model not allowed for this api key`，而界面上"测试连接"是成功的（它只读模型列表、不校验权限）
-     * ⇒ 用户完全看不出是模型名的问题。模型名是**每家服务自己的**，跨地址复用没有意义，所以直接清掉。
-     * 旧地址的探测结论（模型列表）也一并作废，否则候选列表还是别家的名字。
+     * ⇒ 用户完全看不出是模型名的问题。模型名是**每家服务自己的**，跨地址复用没有意义，所以直接清掉，
+     * 等新地址探测成功后由下面的 effect **自动选中**本地址的第一个可图生图模型。
      */
     const customModelAddressRef = useRef(aiBaseUrl);
     useEffect(() => {
@@ -396,7 +399,7 @@ export default function App() {
         setAiModelCustom('');
         localStorage.removeItem('ark-model-custom');
         setCustomProbe({ phase: 'idle' });
-        setAiModelChoiceOpen(false);
+        setAiModelAutoPicked(false);
     }, [aiBaseUrl]);
     /**
      * 「高级设置」折叠状态。
@@ -2494,14 +2497,37 @@ export default function App() {
         ? customProbe.result.modelIds
         : [];
     /**
-     * B52：当前填的模型**不在**这个地址的候选列表里（且列表是有效探测结果）。
-     * 命中的典型场景 = 上一家服务的模型名还留在框里 ⇒ 请求必然 403，但用户从界面上看不出来。
+     * B52-b（用户复核）：下拉里**只放能图生图的模型**（`imageCapableModelIds` 内部：一个都没匹配上时退回全量，
+     * 免得下拉变空、没法选）。`customModelsFellBack` 只用于那行小字的措辞。
      */
-    const customModelStale = customModelIds.length > 0
-        && aiModelCustom.trim() !== ''
-        && !customModelIds.includes(aiModelCustom.trim());
-    /** 一键改用：优先挑一个像"画图的"（`looksLikeImageModel`），没有就用第一个 */
-    const customModelSuggested = customModelIds.find(looksLikeImageModel) ?? customModelIds[0] ?? '';
+    const customImageModels = imageCapableModelIds(customModelIds);
+    const customModelsFellBack = customModelIds.length > 0 && customImageModels.length === customModelIds.length
+        && !customModelIds.some(looksLikeImageModel);
+    /**
+     * B52-b：探测成功后**自动选中**本地址的第一个可图生图模型。
+     *
+     * 这一段同时解决两个问题：① 用户不用点任何东西；② 把上一个地址残留的模型名（403 的根因）顺手换掉。
+     * 只在"当前值不在这个列表里"时才动，所以用户自己选过的模型不会被重置。
+     */
+    useEffect(() => {
+        if (aiProviderKind !== 'custom')
+            return;
+        if (customProbe.phase !== 'done')
+            return;
+        const kind = customProbe.result?.kind;
+        if (kind !== 'ok' && kind !== 'no-models')
+            return;
+        if (customImageModels.length === 0)
+            return;
+        if (customImageModels.includes(aiModelCustom.trim()))
+            return;
+        const pick = customImageModels[0];
+        setAiModelCustom(pick);
+        localStorage.setItem('ark-model-custom', pick);
+        setAiModelAutoPicked(true);
+        // customImageModels 每次渲染都是新数组 ⇒ 用 join 当依赖
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [customProbe, aiProviderKind, aiModelCustom, customImageModels.join('|')]);
     // ——————————— 第 3 批：把手机档底部工具条的高度写成 CSS 变量 ———————————
     // 为什么必须**实测**而不是写死：手机档 `.tool-rail` 是 `flex-wrap`，行数由
     // "13 个条目 × 实宽 + 间隙 ↔ 视口宽" 决定 ⇒ 条目数/字号一变，写死的像素就会静默压住浮层
@@ -3109,30 +3135,18 @@ export default function App() {
                                         " ",
                                         aiModelOpen ? '▴' : '▾')),
                                 aiProviderKind === 'custom' ? (React.createElement(React.Fragment, null,
-                                    React.createElement("input", { "aria-label": "Custom model id", value: aiModelCustom, placeholder: text.aiCustomModelPlaceholder, onChange: (event) => {
+                                    React.createElement("select", { "aria-label": "Custom model id", value: aiModelCustom, disabled: customImageModels.length === 0, onChange: (event) => {
                                             const value = event.target.value;
                                             setAiModelCustom(value);
                                             localStorage.setItem('ark-model-custom', value);
-                                        } }),
-                                    customModelIds.length > 0 && (React.createElement("div", { className: "ai-model-choices" },
-                                        React.createElement("button", { type: "button", className: "ai-model-choices-toggle", "aria-expanded": aiModelChoiceOpen, onClick: () => setAiModelChoiceOpen((v) => !v) },
-                                            text.aiModelChoose,
-                                            "\uFF08",
-                                            customModelIds.length,
-                                            "\uFF09",
-                                            aiModelChoiceOpen ? ' ▴' : ' ▾'),
-                                        (aiModelChoiceOpen || customModelStale) && (React.createElement("div", { className: "ai-model-choice-list" }, customModelIds.map((m) => (React.createElement("button", { key: m, type: "button", className: `ai-model-choice${m === aiModelCustom.trim() ? ' is-current' : ''}${looksLikeImageModel(m) ? ' is-image' : ''}`, onClick: () => {
-                                                setAiModelCustom(m);
-                                                localStorage.setItem('ark-model-custom', m);
-                                                setAiModelChoiceOpen(false);
-                                            } }, m))))))),
-                                    customModelStale && (React.createElement("p", { className: "ai-model-stale" },
-                                        text.aiModelStaleWarning(aiModelCustom.trim()),
-                                        customModelSuggested && (React.createElement("button", { type: "button", className: "ai-model-stale-fix", onClick: () => {
-                                                setAiModelCustom(customModelSuggested);
-                                                localStorage.setItem('ark-model-custom', customModelSuggested);
-                                                setAiModelChoiceOpen(false);
-                                            } }, text.aiModelUseInstead(customModelSuggested))))),
+                                            setAiModelAutoPicked(false);
+                                        } },
+                                        customImageModels.length === 0 && (React.createElement("option", { value: aiModelCustom }, aiModelCustom || text.aiModelNeedProbe)),
+                                        customImageModels.length > 0 && aiModelCustom !== '' && !customImageModels.includes(aiModelCustom) && (React.createElement("option", { value: aiModelCustom }, aiModelCustom)),
+                                        customImageModels.map((m) => React.createElement("option", { key: m, value: m }, m))),
+                                    customImageModels.length > 0 && (React.createElement("small", { className: "ai-model-note" }, aiModelAutoPicked
+                                        ? text.aiModelAutoPicked(aiModelCustom)
+                                        : (customModelsFellBack ? text.aiModelListAll : text.aiModelListImageOnly))),
                                     aiModelOpen && React.createElement("small", null, text.aiCustomModelHint))) : (React.createElement(React.Fragment, null,
                                     React.createElement("input", { "aria-label": "Ark model id", list: "ark-model-presets", value: aiModel, placeholder: DEFAULT_AI_MODEL, onChange: (event) => {
                                             const value = event.target.value;

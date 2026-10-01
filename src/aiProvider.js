@@ -230,6 +230,20 @@ export function looksLikeImageModel(modelId) {
     return /image|dall|dalle|flux|seedream|banana|imagen|stable|sd[-_]?[0-9x]|kolors|hunyuan|draw|paint/i.test(String(modelId ?? ''));
 }
 /**
+ * B52-b（用户复核后的口径）：模型下拉**只列"能图生图"的那几个**。
+ *
+ * 只能靠名字启发式判断：`/models` 里那个 `supported_endpoint_types` **不能**用来判图像能力 ——
+ * 实测同一家中转站里，纯文本模型与图像模型都写着 `["openai"]`。
+ *
+ * ⚠️ **一个都没匹配上时退回全量列表**：宁可让用户看到全部名字，也不能给他一个空下拉
+ * （有些站把图像模型起成别的名字，多列几个总比选不了强）。
+ */
+export function imageCapableModelIds(modelIds) {
+    const all = [...modelIds];
+    const image = all.filter(looksLikeImageModel);
+    return image.length ? image : all;
+}
+/**
  * 免费测试连接：`GET {base}/models`。
  *
  * ⚠️ **不要**用方舟那套"`size: 1x1` 零费用探针"来测自定义地址：那是方舟**参数校验阶段**
