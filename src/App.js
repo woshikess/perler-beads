@@ -308,7 +308,20 @@ export default function App() {
         showGuideLines: true,
         projectName: '',
         authorName: '',
+        // B53：右下角品牌角标**默认开**（用户要求：图纸流通时给站点打广告）
+        watermark: true,
     });
+    /**
+     * B53：导出角标里要画**真 logo**（`assets/logo.png`，与顶栏 `.logo-mark` 同一个文件）。
+     * 导出函数是同步的 ⇒ 在这里预加载一次，导出时把已加载的图片传进选项。
+     * 加载失败/未完成时角标只画文字（`exporters.ts` 里不画标记、宁缺勿假）。
+     */
+    const [brandLogo, setBrandLogo] = useState(null);
+    useEffect(() => {
+        const image = new Image();
+        image.onload = () => setBrandLogo(image);
+        image.src = './assets/logo.png';
+    }, []);
     const [showPencilOptions, setShowPencilOptions] = useState(false);
     const [showEraserOptions, setShowEraserOptions] = useState(false);
     const [showMoveOptions, setShowMoveOptions] = useState(false);
@@ -2462,6 +2475,8 @@ export default function App() {
         const exportOptions = {
             ...printExportOptions,
             projectName: printExportOptions.projectName?.trim() || defaultPrintNickname,
+            // B53：把预加载好的站点 logo 交给角标绘制（没加载完就是 null ⇒ 只画文字）
+            brandLogo,
             /*
               B12（KI-041）：前缀由「图层」/`'Layer'` 改为「第」/`'Pattern'` —— 与 `exporters.ts`
               的 `printLayerName()` 配套（中文得「第1张」，英文得 `Pattern 1`）。

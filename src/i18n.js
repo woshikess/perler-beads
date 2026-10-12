@@ -47,6 +47,8 @@ export const ui = {
         authorNickname: '作者昵称',
         exportFormat: '导出格式',
         includeUsageTable: '导出时附用量表',
+        // B53：右下角品牌角标（站点标记 + 名称 + 网址），默认开
+        watermarkOption: '右下角印网站角标',
         exportBounds: '导出范围',
         exportPatternBounds: '图案尺寸',
         exportCanvasBounds: '画布尺寸',
@@ -430,6 +432,8 @@ export const ui = {
         authorNickname: 'Author name',
         exportFormat: 'Export format',
         includeUsageTable: 'Include usage table',
+        // B53：see the zh block
+        watermarkOption: 'Site badge in the corner',
         exportBounds: 'Export bounds',
         exportPatternBounds: 'Pattern size',
         exportCanvasBounds: 'Canvas size',

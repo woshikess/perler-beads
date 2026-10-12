@@ -194,7 +194,66 @@ function renderPrintCanvas(project, options) {
     if (usageTable) {
         drawUsageTable(context, usage, margin + labelBand, usageTableTop, usageTable);
     }
+    // B53：品牌角标画在**最后**，且只落在底部页边距那条空带里（不碰网格/图例/用量表）
+    if (options.watermark !== false) {
+        drawBrandWatermark(context, { width, height, margin }, options.brandLogo);
+    }
     return canvas;
+}
+/* ── B53：导出图纸的**品牌角标**（用户要求："角落里放一个小小的网站 logo 和名称"）────────────
+   目的是**图纸流通出去时顺便打广告**，所以默认开启。
+   铁律：**绝不能遮住任何一颗豆子** —— 因此它只画在「底部页边距」那条本来就空着的横带
+   （`[height - margin, height]`，即用量表/图例之下、纸张下沿之上），网格区域一个像素都不碰。
+   这条约束由 `工具脚本\_verify_export.cjs` 用「开 / 关两次导出的差异像素必须全部落在底部横带内」
+   来证明（不是靠自觉）。 */
+const WATERMARK_NAME = '克斯拼豆图纸生成器';
+const WATERMARK_URL = 'woshikess.github.io/perler-beads';
+/** 站点标记（真 logo `assets/logo.png`）的边长，单位与排版同一套（scale 之前的"版面单位"） */
+const WATERMARK_MARK_SIZE = 20;
+/** 标记与文字之间的间隙 */
+const WATERMARK_GAP = 5;
+function drawBrandWatermark(context, layout, logo) {
+    const right = layout.width - layout.margin;
+    const centerY = layout.height - layout.margin / 2;
+    context.save();
+    context.globalAlpha = 0.92;
+    context.textAlign = 'right';
+    context.textBaseline = 'alphabetic';
+    // 先量宽度，好把「标记」摆在文字左边、整体右对齐到页边距
+    context.font = '700 11px Arial, "Microsoft YaHei", sans-serif';
+    const nameWidth = context.measureText(WATERMARK_NAME).width;
+    context.font = '8.5px Arial, "Microsoft YaHei", sans-serif';
+    const urlWidth = context.measureText(WATERMARK_URL).width;
+    const textWidth = Math.max(nameWidth, urlWidth);
+    // 两行文字：站点名（上）+ 网址（下）
+    context.fillStyle = '#6b7280';
+    context.font = '700 11px Arial, "Microsoft YaHei", sans-serif';
+    context.fillText(WATERMARK_NAME, right, centerY + 0.5);
+    context.fillStyle = '#9ca3af';
+    context.font = '8.5px Arial, "Microsoft YaHei", sans-serif';
+    context.fillText(WATERMARK_URL, right, centerY + 11);
+    /*
+      站点标记 = **真 logo**（用户 2026-10-12 指出：先前那个青绿方块是我编的，不是站点的 logo）。
+      图片没加载完就**不画** —— 宁缺勿假。
+      等比方块内裁切（`logo.png` 是 128×128），留 1px 圆角，看起来像个整齐的小徽章。
+    */
+    const source = logo;
+    const usable = !!source && source.width > 0 && source.height > 0 && (source.complete === undefined || source.complete === true);
+    if (usable) {
+        const size = WATERMARK_MARK_SIZE;
+        const left = right - textWidth - WATERMARK_GAP - size;
+        const top = centerY - size / 2;
+        context.save();
+        roundRect(context, left, top, size, size, 4);
+        context.clip();
+        context.drawImage(source, left, top, size, size);
+        context.restore();
+        context.strokeStyle = 'rgba(107, 114, 128, 0.35)';
+        context.lineWidth = 0.6;
+        roundRect(context, left, top, size, size, 4);
+        context.stroke();
+    }
+    context.restore();
 }
 function resolvePrintScale(width, height) {
     const sideLimit = Math.min(MAX_EXPORT_CANVAS_SIDE / width, MAX_EXPORT_CANVAS_SIDE / height);
