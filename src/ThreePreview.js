@@ -5,7 +5,7 @@ const BEAD_RADIUS = 0.31;
 const BEAD_HEIGHT = BEAD_RADIUS * 2;
 const LAYER_LIFT = BEAD_HEIGHT;
 const PREVIEW_BACKGROUND = 0x242422;
-export default function ThreePreview({ project, title, emptyLabel, closeLabel, expandLabel }) {
+export default React.memo(function ThreePreview({ project, title, emptyLabel, closeLabel, expandLabel }) {
     const hostRef = useRef(null);
     const modalHostRef = useRef(null);
     const refs = useRef(null);
@@ -55,6 +55,7 @@ export default function ThreePreview({ project, title, emptyLabel, closeLabel, e
             dragging: false,
             lastX: 0,
             lastY: 0,
+            requestRender: () => { }, // 下面 resize() 之前会被真正赋值
         };
         refs.current = preview;
         function resize() {
@@ -64,15 +65,24 @@ export default function ThreePreview({ project, title, emptyLabel, closeLabel, e
             camera.aspect = width / height;
             camera.updateProjectionMatrix();
             updateCamera(preview, controlsRef.current);
+            requestRender();
         }
         const resizeObserver = new ResizeObserver(resize);
         resizeObserver.observe(container);
         resize();
-        function animate() {
-            renderer.render(scene, camera);
-            preview.frame = window.requestAnimationFrame(animate);
+        // W5-P4：**按需渲染**。原来是永不停止的 rAF 循环（画面不变也一直 60fps 渲染，
+        // 与主画布抢 CPU/GPU）。场景是静态的：只有 resize / 转相机 / 滚轮缩放 / 重建珠子
+        // 才会改变画面 ⇒ 这些路径各请求一帧即可。
+        function requestRender() {
+            if (preview.frame)
+                return;
+            preview.frame = window.requestAnimationFrame(() => {
+                preview.frame = 0;
+                renderer.render(scene, camera);
+            });
         }
-        animate();
+        preview.requestRender = requestRender;
+        requestRender();
         function pointerDown(event) {
             event.preventDefault();
             preview.dragging = true;
@@ -91,6 +101,7 @@ export default function ThreePreview({ project, title, emptyLabel, closeLabel, e
             preview.lastX = event.clientX;
             preview.lastY = event.clientY;
             updateCamera(preview, controls);
+            preview.requestRender();
         }
         function pointerUp(event) {
             preview.dragging = false;
@@ -104,6 +115,7 @@ export default function ThreePreview({ project, title, emptyLabel, closeLabel, e
             const zoomFactor = event.deltaY > 0 ? 1.1 : 0.9;
             controls.distance = clamp(controls.distance * zoomFactor, controls.minDistance, controls.maxDistance);
             updateCamera(preview, controls);
+            preview.requestRender();
         }
         renderer.domElement.addEventListener('pointerdown', pointerDown);
         renderer.domElement.addEventListener('pointermove', pointerMove);
@@ -171,6 +183,8 @@ export default function ThreePreview({ project, title, emptyLabel, closeLabel, e
         controlsRef.current.distance = clamp(span * 1.25, controlsRef.current.minDistance, controlsRef.current.maxDistance);
         controlsRef.current.targetY = Math.max(0, ((visibleLayers.length - 1) * LAYER_LIFT) / 2);
         updateCamera(preview, controlsRef.current);
+        // W5-P4：珠子重建后请求一帧（按需渲染）
+        preview.requestRender();
     }, [project, expanded]);
     return (React.createElement(React.Fragment, null,
         React.createElement("div", { className: "three-preview", ref: hostRef, "aria-label": "Live 3D bead preview" },
@@ -197,7 +211,7 @@ export default function ThreePreview({ project, title, emptyLabel, closeLabel, e
                         React.createElement("span", null),
                         React.createElement("span", null)),
                     React.createElement("p", null, emptyLabel)))))))));
-}
+});
 function updateCamera(preview, controls) {
     const horizontal = Math.cos(controls.pitch) * controls.distance;
     preview.camera.up.set(0, horizontal >= 0 ? 1 : -1, 0);

@@ -6,6 +6,37 @@ import { CloseIcon } from './icons.js';
 // 里只声明了 `createRoot`。portal 需要 `createPortal` ⇒ 就地收窄类型，
 // **不去改 `global.d.ts`**（它不在本轮允许改动的文件清单里）。
 const reactDomPortal = ReactDOM;
+// W5-P3：单层快速路径下"空格子"复用的常量数组（drawBeadStack 只读它，不会修改）。
+const EMPTY_BEAD_STACK = [];
+/**
+ * O1（全层面性能审计第一批）：**主画布 DPR 上限 = 2**。
+ *
+ * 为什么：主画布的位图像素数 = CSS 面积 × dpr²。
+ *   · 桌面 dpr=1 → 856×934 = 80 万像素
+ *   · 高分屏 dpr=2 → 1712×1868 = 320 万像素（4 倍）
+ *   · 手机 dpr=3 → 1170×2055 = 240 万像素（但每帧要 clear+fill 两遍）
+ * 每帧的 `clearRect` + `fillRect` + 逐格绘制都按位图像素算 ⇒ dpr=3 时成本约 9 倍。
+ * 限到 2 之后：手机上每帧像素操作 **-55%**，肉眼几乎看不出差别（格子图本来就是硬边，
+ * 不如照片那样依赖超采样）。
+ *
+ * ⚠️ 与 3D 预览保持同一口径（`ThreePreview.tsx` 用的是 `Math.min(dpr, 2.5)`，那是 WebGL 纹理，
+ * 上限可以略高；这里是 2D 位图，2 已经够用）。
+ */
+const MAX_CANVAS_DPR = 2;
+/**
+ * P6（2026-10-20）：**色号在屏幕上至少要有这么大（CSS px）才绘制**。
+ *
+ * 背景：色号字体是 `cellSize * 0.3`（cellSize=18 时约 5.4 世界单位）。
+ *   · 放大到 100%+ 时格子 18px 以上 ⇒ 色号约 5.4~10px，勉强可读 ✅
+ *   · 缩小到 30% 时格子只有 5.4px，色号约 1.6px ⇒ **完全看不清，纯属浪费**
+ *
+ * 而 180×180 的大图在缩小后可见格数是 32,400 个 —— 每帧画 3 万多个看不见的文字，
+ * 这就是「180 格 + 显示色号 + 缩小」卡顿的根因。
+ *
+ * 16 的取值：与旧代码 `cellSize >= 16` 的意图一致（当时把它当成"屏幕上 16px"来写，
+ * 但 cellSize 是常量，条件永远成立）。改成 `cellSize * zoom >= 16` 后语义才真正对齐。
+ */
+const COLOR_CODE_MIN_SCREEN_CELL = 16;
 // —— W0.2 纯搬迁后的导入（新模块都平铺在 src/ 下，不建子目录）——
 import { collectShapeIndices, collectTextIndices, guideLineCenters, hexToRgba, isLightColor, linePoints, readableTextColor } from './shapeGeometry.js';
 import { applyBrush, canShiftSelection, clampShiftDelta, collectBrushIndices, collectConnectedCellIndices, collectConnectedOccupiedIndices, collectFloodFillIndices, collectRecolorIndices, collectSameColorIndices, createClipboardPattern, floodFill, getActiveLayerCells, getTopVisibleColor, mirrorCells, pasteClipboardPattern, shiftCells, } from './cellOperations.js';
@@ -32,7 +63,7 @@ const { useEffect, useMemo, useRef, useState } = React;
  * 不存在跨次泄漏 ⇒ 跳过重置是等价的。
  */
 function ensureCanvasSize(canvas, wrapper, last) {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, MAX_CANVAS_DPR);
     const cssW = wrapper.clientWidth;
     const cssH = wrapper.clientHeight;
     const w = Math.floor(cssW * dpr);
@@ -53,6 +84,14 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
     const wrapperRef = useRef(null);
     /** B48-A1a：上一次真正写进 canvas 的位图尺寸（见 `ensureCanvasSize`）。0 = 还没写过。 */
     const canvasSizeRef = useRef({ w: 0, h: 0, dpr: 0 });
+    /** W5-P2：绘制 rAF 句柄。同一帧内的多次请求合并成一次真实重绘（鼠标移动/拖动时收益最大）。 */
+    const drawRafRef = useRef(0);
+    /** W5-P6b：最近一次上报给 App 的 hover 格子键（"x,y"）。同一格内移动不重复上报，
+     *  避免鼠标每动一次就让 App 全量重渲染（App 无 memo，hoverCell 提升到顶层）。 */
+    const lastHoverRef = useRef(null);
+    /** W5-P6a：最新绘制参数快照。ResizeObserver effect 只建一次（依赖 []），
+     *  回调从这里读最新值，避免它随 hoverPoint/pan 等变化重跑导致 drawPattern 画两遍。 */
+    const drawParamsRef = useRef(null);
     const draftCellsRef = useRef(getActiveLayerCells(project));
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -207,6 +246,34 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
         offset: referenceImageOffset,
         placement: referenceImagePlacement,
     }), [referenceImage, referenceImageVisible, referenceImageOpacity, referenceImageScale, referenceImageOffset, referenceImagePlacement]);
+    // W5-P6a：每次渲染更新最新绘制参数（供只建一次的 ResizeObserver 回调读取，避免重复绘制）
+    drawParamsRef.current = {
+        project,
+        cellSize,
+        zoom,
+        pan,
+        highlightedColorId,
+        highlightedCellIndices,
+        tool,
+        clipboardPhase,
+        selectedColorId,
+        eraserSize,
+        eraserScope,
+        moveMode,
+        mirrorMode,
+        clipboardPattern,
+        copyMode,
+        copySelectionIndices,
+        shapeDraft,
+        hoverPoint,
+        canEdit,
+        referenceImageOptions,
+        textToolValue,
+        textToolDirection,
+        textToolSize,
+        textToolSpacing,
+        formatColorCode,
+    };
     useEffect(() => {
         const onKeyDown = (event) => {
             if (event.code === 'Space')
@@ -258,37 +325,76 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
         const context = canvas.getContext('2d');
         if (!context)
             return;
-        const dpr = ensureCanvasSize(canvas, wrapper, canvasSizeRef.current);
-        context.setTransform(dpr, 0, 0, dpr, 0, 0);
-        // B48-A1a：跳过一次 canvas.width 赋值后，这两个状态不再被"重置"顺带清掉 ⇒ 显式复位
-        //（主画布上其余状态改动都在 save()/restore() 内或成对复位，见 ensureCanvasSize 注释）
-        context.globalAlpha = 1;
-        context.setLineDash([]);
-        drawPattern(context, project, cellSize, zoom, pan, highlightedColorId, highlightedCellIndices, tool, clipboardPhase, selectedColorId, eraserSize, eraserScope, moveMode, mirrorMode, clipboardPattern, copyMode, copySelectionIndices, shapeDraft, hoverPoint, canEdit, referenceImageOptions, textToolValue, textToolDirection, textToolSize, textToolSpacing, formatColorCode);
+        // W5-P2：**绘制合并到下一帧**。原来 effect 一跑就同步全量重绘，
+        // 而 `hoverPoint`（鼠标每移一格就 setState）在这个依赖里 ⇒ 高频鼠标移动＝高频全量重绘。
+        // 改成 rAF 合并后：同一帧内无论触发多少次，只真正重绘一次。
+        if (drawRafRef.current)
+            window.cancelAnimationFrame(drawRafRef.current);
+        drawRafRef.current = window.requestAnimationFrame(() => {
+            drawRafRef.current = 0;
+            const dpr = ensureCanvasSize(canvas, wrapper, canvasSizeRef.current);
+            context.setTransform(dpr, 0, 0, dpr, 0, 0);
+            // B48-A1a：跳过一次 canvas.width 赋值后，这两个状态不再被"重置"顺带清掉 ⇒ 显式复位
+            //（主画布上其余状态改动都在 save()/restore() 内或成对复位，见 ensureCanvasSize 注释）
+            context.globalAlpha = 1;
+            context.setLineDash([]);
+            drawPattern(context, project, cellSize, zoom, pan, highlightedColorId, highlightedCellIndices, tool, clipboardPhase, selectedColorId, eraserSize, eraserScope, moveMode, mirrorMode, clipboardPattern, copyMode, copySelectionIndices, shapeDraft, hoverPoint, canEdit, referenceImageOptions, textToolValue, textToolDirection, textToolSize, textToolSpacing, formatColorCode);
+        });
+        return () => {
+            if (drawRafRef.current) {
+                window.cancelAnimationFrame(drawRafRef.current);
+                drawRafRef.current = 0;
+            }
+        };
     }, [project, cellSize, zoom, pan, highlightedColorId, highlightedCellIndices, tool, clipboardPhase, selectedColorId, eraserSize, eraserScope, moveMode, mirrorMode, clipboardPattern, copyMode, copySelectionIndices, shapeKind, shapeDraft, hoverPoint, canEdit, referenceImageOptions, textToolValue, textToolDirection, textToolSize, textToolSpacing, formatColorCode]);
     useEffect(() => {
-        const observer = new ResizeObserver(() => {
-            const canvas = canvasRef.current;
+        // W5-P6a：ResizeObserver **只建一次**（依赖 []）。原来它的依赖数组与主绘制 effect 完全
+        // 相同（30 项），导致每次 hoverPoint/pan 等变化时本 effect 也重跑：先 disconnect 旧
+        // observer 再新建 → 新建后的首次回调立即触发一次 drawPattern → 每次变化重复绘制一遍。
+        // 现在回调从 drawParamsRef 读最新参数，只负责"窗口尺寸变化时重绘"，不再随状态变化重跑。
+        const startObserve = () => {
             const wrapper = wrapperRef.current;
-            if (!canvas || !wrapper)
-                return;
-            const context = canvas.getContext('2d');
-            if (context) {
-                const dpr = ensureCanvasSize(canvas, wrapper, canvasSizeRef.current);
-                context.setTransform(dpr, 0, 0, dpr, 0, 0);
-                context.globalAlpha = 1;
-                context.setLineDash([]);
-                drawPattern(context, project, cellSize, zoom, pan, highlightedColorId, highlightedCellIndices, tool, clipboardPhase, selectedColorId, eraserSize, eraserScope, moveMode, mirrorMode, clipboardPattern, copyMode, copySelectionIndices, shapeDraft, hoverPoint, canEdit, referenceImageOptions, textToolValue, textToolDirection, textToolSize, textToolSpacing, formatColorCode);
-            }
-            setPan((current) => {
-                const next = constrainPan(current, zoom);
-                return almostSamePoint(current, next) ? current : next;
+            if (!wrapper)
+                return null;
+            const observer = new ResizeObserver(() => {
+                const canvas = canvasRef.current;
+                if (!canvas || !wrapper)
+                    return;
+                const context = canvas.getContext('2d');
+                if (context) {
+                    const p = drawParamsRef.current;
+                    const dpr = ensureCanvasSize(canvas, wrapper, canvasSizeRef.current);
+                    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+                    context.globalAlpha = 1;
+                    context.setLineDash([]);
+                    drawPattern(context, p.project, p.cellSize, p.zoom, p.pan, p.highlightedColorId, p.highlightedCellIndices, p.tool, p.clipboardPhase, p.selectedColorId, p.eraserSize, p.eraserScope, p.moveMode, p.mirrorMode, p.clipboardPattern, p.copyMode, p.copySelectionIndices, p.shapeDraft, p.hoverPoint, p.canEdit, p.referenceImageOptions, p.textToolValue, p.textToolDirection, p.textToolSize, p.textToolSpacing, p.formatColorCode);
+                }
+                const p = drawParamsRef.current;
+                setPan((current) => {
+                    const next = constrainPan(current, p.zoom);
+                    return almostSamePoint(current, next) ? current : next;
+                });
             });
-        });
-        if (wrapperRef.current)
-            observer.observe(wrapperRef.current);
-        return () => observer.disconnect();
-    }, [project, cellSize, zoom, pan, highlightedColorId, highlightedCellIndices, tool, clipboardPhase, selectedColorId, eraserSize, eraserScope, moveMode, mirrorMode, clipboardPattern, copyMode, copySelectionIndices, shapeKind, shapeDraft, hoverPoint, canEdit, referenceImageOptions, textToolValue, textToolDirection, textToolSize, textToolSpacing, formatColorCode]);
+            observer.observe(wrapper);
+            return observer;
+        };
+        let observer = startObserve();
+        if (!observer) {
+            // wrapper 首帧未就绪：下一帧重试一次
+            const raf = window.requestAnimationFrame(() => {
+                const retry = startObserve();
+                if (retry)
+                    observer = retry;
+            });
+            return () => {
+                window.cancelAnimationFrame(raf);
+                if (observer)
+                    observer.disconnect();
+            };
+        }
+        const obs = observer; // 窄化为非 null（闭包内 TS 不做此推断）
+        return () => obs.disconnect();
+    }, []);
     // W1：触摸前摇被双指手势打断时，把「已经开始/即将开始」的单指操作整段丢弃。
     // 注意：只清 pointerRef 与 shapeDraft，**不碰格子数组、不写撤销历史**（所以双指缩放不会留脏点）。
     function cancelPointerForGesture() {
@@ -659,7 +765,13 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
         // W1：触摸不写 hover（触摸没有「悬停」语义；工具影响预览在触摸下由 shapeDraft / 格子本身表达）
         if (!isTouch) {
             setHoverPoint(point);
-            onHover(cell ? { ...cell, colorId: getTopVisibleColor(project, cell.y * project.width + cell.x) } : null);
+            // W5-P6b：hover 上报节流 —— 同一格内移动（x/y 不变）不上报 App，
+            // 避免 setHoverCell → App 全量重渲染（4590 行组件树无 memo）。
+            const hoverKey = cell ? `${cell.x},${cell.y}` : '';
+            if (hoverKey !== lastHoverRef.current) {
+                lastHoverRef.current = hoverKey;
+                onHover(cell ? { ...cell, colorId: getTopVisibleColor(project, cell.y * project.width + cell.x) } : null);
+            }
         }
         if (pointerRef.current.copySelecting) {
             if (cell) {
@@ -799,6 +911,7 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
         if (isTouch) {
             // 触摸抬起后不留 hover 预览
             setHoverPoint(null);
+            lastHoverRef.current = null;
             onHover(null);
         }
         try {
@@ -810,6 +923,7 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
     }
     function handlePointerLeave() {
         setHoverPoint(null);
+        lastHoverRef.current = null;
         onHover(null);
     }
     function handleWheel(event) {
@@ -1112,8 +1226,23 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
         panelLayout && openPanel && React.createElement("div", { className: "panel-scrim", "aria-hidden": "true", onClick: () => setOpenPanel(null) })));
 }
 function drawPattern(context, project, cellSize, zoom, pan, highlightedColorId, highlightedCellIndices, tool, clipboardPhase, selectedColorId, eraserSize, eraserScope, moveMode, mirrorMode, clipboardPattern, copyMode, copySelectionIndices, shapeDraft, hoverPoint, canEdit, referenceImage, textToolValue, textToolDirection, textToolSize, textToolSpacing, formatColorCode) {
-    const canvasWidth = context.canvas.width / (window.devicePixelRatio || 1);
-    const canvasHeight = context.canvas.height / (window.devicePixelRatio || 1);
+    // ⚠️ **必须 clearRect**（2026-10-20 事故回滚）：
+    // 曾为省一半整屏像素操作把它删掉，理由是"紧接着的 fillRect 不透明、clear 多余"。
+    // **这个理由是错的**：那个 fillRect 在 `translate(pan)` / `scale(zoom)` 之后，
+    // 只覆盖"图纸矩形在屏幕上的投影"，**不是整块 canvas** ⇒ 图纸没盖住的区域保留上一帧
+    // ⇒ 拖动时强残影、网格叠加错位。
+    // 结论：**这一行不能省**。要省成本请走离屏缓存（O4），不要动这里。
+    //
+    // ⚠️⚠️ 2026-10-20 第二次事故（立体堆叠残影）根因：
+    // 曾把这里改成 `canvas.width / canvas.clientWidth`（想"反推 dpr"），
+    // **算错了方向** —— 得到的是 dpr（1.25）而不是 CSS 宽（1176），
+    // 于是 `clearRect(0,0,1.25,1.25)` 只清了左上角一个点，其余全残留 ⇒ 拖动时旧帧堆成立体。
+    //
+    // **正确写法**：调用方已经 `context.setTransform(dpr,0,0,dpr,0,0)`，
+    // 这个坐标系下的"画布宽高"**就是 CSS 像素尺寸**，直接取 `canvas.clientWidth/Height`。
+    // 不要再用 `canvas.width / xxx` 反推任何东西——那是位图像素，不是这个坐标系的单位。
+    const canvasWidth = context.canvas.clientWidth || context.canvas.width;
+    const canvasHeight = context.canvas.clientHeight || context.canvas.height;
     context.clearRect(0, 0, canvasWidth, canvasHeight);
     context.fillStyle = '#f3f0e8';
     context.fillRect(0, 0, canvasWidth, canvasHeight);
@@ -1122,17 +1251,59 @@ function drawPattern(context, project, cellSize, zoom, pan, highlightedColorId, 
     context.scale(zoom, zoom);
     context.fillStyle = '#fffdf7';
     context.fillRect(0, 0, project.width * cellSize, project.height * cellSize);
+    // W5-P5：**视口裁剪** —— 只画屏幕可见的格子区间。
+    // 坐标系说明：`clearRect` 之后已 `translate(pan)` + `scale(zoom)`，
+    // 此后的世界坐标 → 屏幕坐标 = `world * zoom + pan`；
+    // `canvasWidth/Height` 是 CSS 像素（= clientWidth，已在上方修正），与这个坐标系一致。
+    // 反解：world = (screen - pan) / zoom。
+    // ⚠️ 依赖 `canvasWidth` 正确 —— 2026-10-20 的立体残影事故就是因为这个值算成了 dpr。
+    const worldX0 = -pan.x / zoom;
+    const worldY0 = -pan.y / zoom;
+    const worldX1 = (canvasWidth - pan.x) / zoom;
+    const worldY1 = (canvasHeight - pan.y) / zoom;
+    const col0 = Math.max(0, Math.floor(worldX0 / cellSize));
+    const row0 = Math.max(0, Math.floor(worldY0 / cellSize));
+    const col1 = Math.min(project.width, Math.ceil(worldX1 / cellSize));
+    const row1 = Math.min(project.height, Math.ceil(worldY1 / cellSize));
     const visibleLayers = (project.layers ?? []).filter((layer) => layer.visible);
+    // W5-P3：单层快速路径。注释（见下方 drawBeadStack 附近）说明正常路径恒为 1 层，
+    // 此时无需每格 map().filter() 分配两个数组 + N 个对象。
+    const singleLayer = visibleLayers.length === 1 ? visibleLayers[0] : null;
     const highlightedCells = highlightedCellIndices.length > 0 ? new Set(highlightedCellIndices) : null;
+    // W5-P1：色号字体/对齐在循环外设一次（原来每格都设一遍，2704 次 font setter）。
+    //
+    // 2026-10-20 P6：**色号显示门槛改成按「屏幕上的实际大小」判断**。
+    // 原来写的是 `cellSize >= 16` —— 但 `cellSize` 是常量 18，这个条件**永远成立**，
+    // 于是缩小到能看全 180×180 时仍然每帧画 32,400 个色号（屏幕上每格才 3.6px，根本看不清）。
+    // 现在要求 `cellSize * zoom >= 16`（屏幕像素）：缩放到格子小于 16px 就不画色号，
+    // 放大回去自动恢复。这是「180 格 + 色号 + 缩小」卡顿的直接原因。
+    //
+    // ⚠️ 注意坐标系：此处已经在 `scale(zoom)` 之后，`cellSize` 是**世界单位**，
+    // 屏幕尺寸 = `cellSize * zoom`。而下面的 `context.font` 也必须用世界单位
+    // （`cellSize * 0.3`），它会随 zoom 一起放大 —— 两者不能混。
+    const codeCellScreenSize = cellSize * zoom;
+    const showColorCodes = Boolean(project.settings.showColorCodes) && codeCellScreenSize >= COLOR_CODE_MIN_SCREEN_CELL;
+    if (showColorCodes) {
+        context.font = `${Math.max(7, cellSize * 0.3)}px Arial`;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+    }
     if (referenceImage.visible && referenceImage.placement === 'below') {
         drawReferenceImage(context, project, cellSize, referenceImage);
     }
-    for (let y = 0; y < project.height; y += 1) {
-        for (let x = 0; x < project.width; x += 1) {
+    for (let y = row0; y < row1; y += 1) {
+        for (let x = col0; x < col1; x += 1) {
             const index = y * project.width + x;
-            const stack = visibleLayers
-                .map((layer) => ({ layer, colorId: layer.cells?.[index] }))
-                .filter((item) => Boolean(item.colorId));
+            let stack;
+            if (singleLayer) {
+                const colorId = singleLayer.cells?.[index];
+                stack = colorId ? [{ layer: singleLayer, colorId }] : EMPTY_BEAD_STACK;
+            }
+            else {
+                stack = visibleLayers
+                    .map((layer) => ({ layer, colorId: layer.cells?.[index] }))
+                    .filter((item) => Boolean(item.colorId));
+            }
             const topColorId = stack.length > 0 ? stack[stack.length - 1].colorId : null;
             const topColor = getColor(topColorId);
             const left = x * cellSize;
@@ -1155,11 +1326,9 @@ function drawPattern(context, project, cellSize, zoom, pan, highlightedColorId, 
             if (highlightedCells?.has(index) && topColorId) {
                 drawCellAlert(context, left, top, cellSize);
             }
-            if (project.settings.showColorCodes && topColor && cellSize >= 16) {
+            if (showColorCodes && topColor) {
+                // W5-P1：font/textAlign/textBaseline 已在循环外设过一次，这里只改随格变化的颜色。
                 context.fillStyle = readableTextColor(topColor.rgb);
-                context.font = `${Math.max(7, cellSize * 0.3)}px Arial`;
-                context.textAlign = 'center';
-                context.textBaseline = 'middle';
                 context.fillText(formatColorCode?.(topColor.id) ?? topColor.primaryCode, left + cellSize / 2, top + cellSize / 2);
             }
         }
@@ -1182,11 +1351,11 @@ function drawPattern(context, project, cellSize, zoom, pan, highlightedColorId, 
         drawShapePreview(context, [index], project.width, cellSize, selectedColorId);
     }
     if (project.settings.showGrid)
-        drawGrid(context, project, cellSize);
+        drawGrid(context, project, cellSize, col0, row0, col1, row1);
     if (project.settings.showPegboardBoundaries)
         drawPegboardBoundaries(context, project, cellSize);
     if (project.settings.showCoordinates && cellSize * zoom > 10)
-        drawCoordinates(context, project, cellSize);
+        drawCoordinates(context, project, cellSize, col0, row0, col1, row1);
     // 笔刷光标只在「笔刷」档下画；整片删除没有半径概念。
     if (tool === 'eraser' && eraserScope === 'brush' && hoverPoint && canEdit && eraserSize > 0) {
         drawBrushCursor(context, hoverPoint.gridX, hoverPoint.gridY, eraserSize, cellSize);
@@ -1505,32 +1674,42 @@ function drawReferenceImage(context, project, cellSize, reference) {
     context.drawImage(reference.image, drawX * cellSize, drawY * cellSize, drawWidth * cellSize, drawHeight * cellSize);
     context.restore();
 }
-function drawGrid(context, project, cellSize) {
+function drawGrid(context, project, cellSize, col0, row0, col1, row1) {
     context.strokeStyle = '#d6d3cc';
     context.lineWidth = 1;
-    for (let x = 0; x <= project.width; x += 1) {
+    // W5-P5：只画可见区间的网格线（大图 156×156 时从 314 条降到几十条）。
+    // 线段端点也收缩到可见范围，避免画到屏幕外的长线段。
+    for (let x = col0; x <= col1; x += 1) {
         context.beginPath();
-        context.moveTo(x * cellSize, 0);
-        context.lineTo(x * cellSize, project.height * cellSize);
+        context.moveTo(x * cellSize, row0 * cellSize);
+        context.lineTo(x * cellSize, row1 * cellSize);
         context.stroke();
     }
-    for (let y = 0; y <= project.height; y += 1) {
+    for (let y = row0; y <= row1; y += 1) {
         context.beginPath();
-        context.moveTo(0, y * cellSize);
-        context.lineTo(project.width * cellSize, y * cellSize);
+        context.moveTo(col0 * cellSize, y * cellSize);
+        context.lineTo(col1 * cellSize, y * cellSize);
         context.stroke();
     }
 }
-function drawCoordinates(context, project, cellSize) {
+function drawCoordinates(context, project, cellSize, col0, row0, col1, row1) {
     context.fillStyle = 'rgba(17,24,39,0.45)';
     context.font = '8px Arial';
     context.textAlign = 'left';
     context.textBaseline = 'top';
-    for (let x = 0; x < project.width; x += 5) {
-        context.fillText(String(x + 1), x * cellSize + 2, 2);
+    // W5-P5：坐标数字跟着**可见区域**走 —— 原来固定画在图纸左上角，
+    // 平移/放大后那两块早就跑到屏幕外了，数字也跟着消失。
+    // 现在钉在可见区间的起始格上（与滚动表格的"行号跟随"同理），任何位置都看得到。
+    const anchorX = col0 * cellSize + 2;
+    const anchorY = row0 * cellSize + 2;
+    // 从"可见起点所在的那条 5 的倍数"开始，保证数字位置稳定（不会随平移抖动）。
+    const startX = Math.ceil(col0 / 5) * 5;
+    const startY = Math.ceil(row0 / 5) * 5;
+    for (let x = startX; x < col1; x += 5) {
+        context.fillText(String(x + 1), x * cellSize + 2, anchorY);
     }
-    for (let y = 0; y < project.height; y += 5) {
-        context.fillText(String(y + 1), 2, y * cellSize + 2);
+    for (let y = startY; y < row1; y += 5) {
+        context.fillText(String(y + 1), anchorX, y * cellSize + 2);
     }
 }
 function drawPegboardBoundaries(context, project, cellSize) {

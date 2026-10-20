@@ -11,6 +11,8 @@ import { ensureSegmenter, isModelReady, segmentSubject } from './segmentModel.js
 import { evaluateSubjectGate, upscaleSubjectMask } from './subjectGate.js';
 import ParamNumberField from './ParamNumberField.js';
 import { getColor } from './palette.js';
+// W13（2026-10-20）：调色盘按明度梯度排序要用 Rec.709 亮度（与方案预览图同一算法）。
+import { luminance709 } from './luminance.js';
 // KI-012（W3.4 接线）：色板必须跟着 `project.activeBrand` 走。
 // `paletteForBrand` = 该品牌默认（basic 档）色板；`completePaletteForBrand` = 该品牌全量（complete 档）。
 // 默认品牌仍是 MARD，且 MARD 两个分支返回的就是 `basicPalette` / `completePalette` 本身，
@@ -593,7 +595,31 @@ export default function App() {
         { id: 'all', label: 'All' },
         ...[...new Set(activePalette.map((color) => color.group))].map((group) => ({ id: group, label: group })),
     ], [activePalette]);
-    const visiblePalette = useMemo(() => (paletteGroup === 'all' ? activePalette : activePalette.filter((color) => color.group === paletteGroup)), [activePalette, paletteGroup]);
+    /**
+     * W13（2026-10-20 用户决策）：**调色盘按「明度单一梯度」排布**。
+     *
+     * 用户原话：「按照明度单一梯度比较好」。
+     * 改动前：按 MARD 编号顺序（A1, A2, A3… B1, B2…），颜色是"编号驱动"的杂色带，
+     *        同组内颜色跳跃大（A1 淡黄 → A6 橙 → A13 粉），找色只能靠记编号。
+     * 改动后：**全色按明度从暗到亮排一条连续梯度**，与官方编号完全解耦。
+     *
+     * 明度口径：`luminance709`（Rec.709 = 0.2126R + 0.7152G + 0.0722B），
+     *   与方案预览图（`调色盘排布方案/`）里用的算法一致，所见即所得。
+     *
+     * ⚠️ 只在 `paletteGroup === 'all'` 时排序；选中具体编号组（A/B/C…）时仍保留原编号顺序 ——
+     *    因为那时用户是"按编号找"，编号序才是他要的。
+     * ⚠️ 用 `slice()` 复制后再 sort：`activePalette` 是模块级常量，**绝不能就地排序**。
+     */
+    const visiblePalette = useMemo(() => {
+        const base = paletteGroup === 'all' ? activePalette : activePalette.filter((color) => color.group === paletteGroup);
+        if (paletteGroup !== 'all')
+            return base;
+        return base.slice().sort((a, b) => {
+            const d = luminance709(a.rgb) - luminance709(b.rgb);
+            // 明度相同时用 id 兜底，保证排序稳定（避免每次渲染顺序抖动）
+            return d !== 0 ? d : a.id.localeCompare(b.id);
+        });
+    }, [activePalette, paletteGroup]);
     /**
      * （W6 已删除）KI-007 的旧判据 `importParamsAtDefault` / `sourceImageMissing`。
      * 那是"源图只活在内存"时代的**临时缓解**：刷新后没有源图 ⇒ 改参数静默无效，只能靠一条常驻提示兜底。
@@ -3181,7 +3207,7 @@ export default function App() {
                                     ? text.aiHistoryOriginal
                                     : `${text.aiHistoryTitle} ${index} · ${item.bg === 'keep' ? text.keepBackground : text.removeWhite}`, disabled: aiRedrawing || isGenerating, onClick: () => selectHistoryEntry(index) },
                                 React.createElement("img", { src: item.url, alt: item.isOriginal ? text.aiHistoryOriginal : `${index}` }),
-                                !item.isOriginal && item.style != null && (React.createElement("span", { className: `ai-history-w${item.style !== aiStyle ? ' is-stale' : ''}`, title: `${text.aiStyleBadge(item.style)}${item.style !== aiStyle ? ` · ${text.aiStyleStale}（${text.aiStyleBadge(aiStyle)}）` : ''}` }, text.aiStyleBadge(item.style))),
+                                !item.isOriginal && item.style != null && (React.createElement("span", { className: "ai-history-w", title: text.aiStyleBadge(item.style) }, text.aiStyleBadge(item.style))),
                                 React.createElement("span", { className: "ai-history-no" }, item.isOriginal ? text.aiHistoryOriginalShort : index))))),
                             aiHistory.length > 1 && (React.createElement("p", { className: "ai-history-ephemeral" }, text.aiVersionEphemeral))))),
                     aiRedrawing && (React.createElement("div", { className: "ai-redraw-progress" },

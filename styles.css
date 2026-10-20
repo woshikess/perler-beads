@@ -1565,9 +1565,13 @@ button:focus-visible {
   padding: 0;
   border-color: rgba(17, 24, 39, 0.16);
   border-radius: 8px;
-  background: rgba(255, 253, 247, 0.9);
+  /* O3（全层面性能审计第一批）：**去掉 backdrop-filter**。
+     这个按钮绝对定位在 3D 预览画布右下角，那块区域的像素在用户拖动旋转时**每帧都在变**
+     ⇒ 浏览器每帧都要重读背后像素重新做一次 10px 模糊（backdrop-filter 无法缓存）。
+     而背景色本来就是 rgba(255,253,247,0.9)（90% 不透明），模糊的视觉贡献几乎为零。
+     改成 0.94 的纯色即可保持观感，同时消掉这处每帧重算。 */
+  background: rgba(255, 253, 247, 0.94);
   color: var(--accent);
-  backdrop-filter: blur(10px);
   box-shadow: 0 4px 14px rgba(39, 31, 20, 0.12);
 }
 
@@ -6995,3 +6999,266 @@ body {
   /* B50：转圈也停（但保留圆环本身，仍能看出"在忙"） */
   .workspace-spinner { animation: none; border-top-color: rgba(23, 101, 106, .25); }
 }
+
+/* ============================================================================
+   ▼▼▼ 手机端 / iPad 端优化（本轮新增，2026-10-13）▼▼▼
+   ----------------------------------------------------------------------------
+   【本块整体可回退】整块删除本段即回到加块之前的状态，不碰任何既有规则。
+   （没有改上面任何一条已有声明；本块只**追加**声明，靠源码顺序覆盖。）
+
+   三条改动，都只动"可见几何"，不动算法：
+     §1 iPad 顶栏 117px 两行 → 单行（≥1024px）
+     §2 iPad 抽屉 浮层+遮罩 → 固定侧栏（≥1024px，推挤不覆盖）
+     §3 三个滑条命中区 22px → 44px（粗指针）
+
+   ⚠️ 与 `useMediaQuery.ts` 的关系：
+     §1 / §2 用的断点 **(min-width:1024px) and (pointer:coarse) and (max-width:1400px)**
+     是**新增的、更窄**的一条，它落在既有 `TOUCH_TABLET_QUERY`（coarse 且 768–1400）之内，
+     所以"是不是平板"这个 JS 判据**不需要改**：命中的一定已经是平板档。
+     桌面（pointer:fine）与手机（<768）两条都不命中 ⇒ 零影响。
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   §1 iPad 顶栏收成单行（≥1024px 的触屏平板）
+   ---------------------------------------------------------------------------
+   现状（实测 1376×1032）：顶栏 117px = 两行（品牌+trailing / 参数+撤销重做+导出），占屏 11.3%。
+   1376px 宽完全放得下 ⇒ 排成一行，画布多回 61px。
+
+   做法：沿用既有命名区域（title/trailing/params/document/actions），
+   只在**本档**把三列改成五行 —— 一行装下全部槽位。
+   ⚠️ 只改 `.topbar` 自己的 columns/areas，槽位的 `grid-area` 声明一个字不动
+      （那几条在共用块里，手机档还要用同名区域排成 'params document actions'）。
+   ⚠️ 品牌在 1024 这一档收窄（不隐藏：1024 还放得下），1376 起恢复自然宽。
+   --------------------------------------------------------------------------- */
+@media (min-width: 1024px) and (pointer: coarse) and (max-width: 1400px) {
+  .topbar {
+    grid-template-columns:
+      max-content      /* title   品牌 */
+      max-content      /* params  参数 */
+      max-content      /* document 撤销/重做 */
+      minmax(0, 1fr)   /* 弹性空隙 */
+      max-content      /* actions 导出组 */
+      max-content;     /* trailing GitHub/语言 */
+    grid-template-areas: 'title params document . actions trailing';
+    row-gap: 0;
+    padding: 6px 12px;
+  }
+
+  /* 品牌在这一档只留 logo + 名称，副标题（尺寸/颜色数那句小字）让位给参数区 */
+  .topbar-slot--title .brand-lockup small {
+    display: none;
+  }
+
+  .topbar-slot--title {
+    max-width: 190px;
+    overflow: hidden;
+  }
+
+  /* 组间距在本档收紧（原来靠换行，现在靠列间距） */
+  .topbar-slot--document {
+    margin-left: 0;
+  }
+
+  .topbar-slot--params {
+    margin-left: 10px;
+  }
+
+  .topbar-slot--actions {
+    margin-left: 10px;
+  }
+
+  /* 单行后参数区的三个控件并排：两个数字框 + 预设 + 「应用」都在这一行 */
+  .topbar-params {
+    flex-wrap: nowrap;
+  }
+
+  /* 顶栏只有一行 ⇒ 覆盖层（工具浮层坐标系）的上边界跟着抬高。
+     这一条不改布局，只让 `--topbar-h` 与真实顶栏一致（工具浮层被夹在上面时不会压住顶栏）。 */
+  .app-shell {
+    --topbar-h: 56px;
+  }
+}
+
+/* 1376 档（iPad Pro 13"）：品牌完全不收窄，参数区也放开 */
+@media (min-width: 1280px) and (pointer: coarse) and (max-width: 1400px) {
+  .topbar-slot--title {
+    max-width: none;
+  }
+  .topbar-slot--title .brand-lockup small {
+    display: block;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   §2 iPad 抽屉：浮层 + 遮罩 → 固定侧栏（推挤，不覆盖）
+   ---------------------------------------------------------------------------
+   现状（实测 1376 打开「参考」）：抽屉 320px 浮在右侧，带一层全屏遮罩把 1292px 宽的画布
+   整个压暗 ⇒ 看不见也没法编辑。而拼豆的核心循环是「看图 → 改一格 → 再看图」
+   ⇒ 每改一次都得关抽屉确认一次。
+
+   做法（master-detail / NavigationSplitView 的「推挤」思路）：
+     · 面板回到**网格列**（不再是 fixed 浮层）⇒ 画布自动让位，两者并排
+     · 关掉遮罩（`.panel-scrim{display:none}`）⇒ 画布不被压暗、可继续交互
+     · 开关仍走既有的 `is-left-open/is-right-open` 类 + `openPanel` 状态机（一行 JS 都不改）
+     · 关闭按钮仍在抽屉内（`.panel-close-row`），点它 / 点另一个面板条目都能收起
+
+   ⚠️ 这一档 **只覆盖 ≥1024px 的触屏平板**：
+       1024×768（iPad 10.9"/Air 横屏）与 1376×1032（iPad Pro 13"）都命中；
+       768 竖屏不命中 ⇒ 保持原浮层（768px 并排会太挤）。
+   ⚠️ 面板宽度：左 320 / 右 360 是既有值，这里照用，只是从"浮层宽"变成"列宽"。
+   --------------------------------------------------------------------------- */
+@media (min-width: 1024px) and (pointer: coarse) and (max-width: 1400px) {
+  /* 遮罩在本档彻底不参与：画布不被压暗，也不再吃指针事件 */
+  .panel-scrim {
+    display: none !important;
+  }
+
+  /* 面板变回网格列（覆盖 W1.3 段那套 fixed 浮层定位）。
+     ⚠️ 必须逐条写回 `position: static` 与四个方向 auto：
+        只写 position 会让 top/bottom/left/right 的残余值继续生效。 */
+  .left-panel,
+  .right-panel {
+    position: static;
+    top: auto;
+    bottom: auto;
+    left: auto;
+    right: auto;
+    transform: none;
+    transition: none;
+    z-index: auto;
+    box-shadow: none;
+    border-radius: 0;
+    border-bottom: 0;
+  }
+
+  /* 左面板：收起时不占列（0 宽 + 不渲染内容），展开时 320px。
+     ⚠️ 列号必须是 **2**（不是 1）：第 1 列被 `.tool-rail` 占着
+        （工具条在平板档是左侧 84px 的竖列，`grid-column: 1`）。
+        实测教训：一开始写 `grid-column: 1` ⇒ 面板与工具条**同占第 1 列**，
+        两者重叠，面板把工具条盖住（面板 rect.x=0、工具条也 x=0）。 */
+  .left-panel {
+    grid-column: 2;
+    grid-row: 2;
+    width: 320px;
+    border-right: 1px solid var(--line-strong);
+    border-left: 0;
+    padding: 12px;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* 右面板：同上，360px（第 4 列） */
+  .right-panel {
+    grid-column: 4;
+    grid-row: 2;
+    width: 360px;
+    border-left: 1px solid var(--line-strong);
+    padding: 12px;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* 收起态 = 列宽 0（内容随 `overflow:hidden` 一起藏起来）。
+     `display:none` 会让抽屉**打不开**（没有可过渡的盒子），所以用宽度收零。 */
+  .app-shell:not(.is-left-open) .left-panel {
+    width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    border-right: 0;
+    overflow: hidden;
+  }
+
+  .app-shell:not(.is-right-open) .right-panel {
+    width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    border-left: 0;
+    overflow: hidden;
+  }
+
+  /* 侧栏档的抽屉把手（那是 bottom sheet 的装饰，侧栏里没有意义）*/
+  .left-panel::before,
+  .right-panel::before {
+    display: none;
+  }
+
+  /* 抽屉里的关闭行：侧栏档贴右即可（原本是给浮层排的） */
+  .left-panel .panel-close-row,
+  .right-panel .panel-close-row {
+    position: sticky;
+    bottom: 0;
+    background: var(--panel);
+    padding-top: 8px;
+  }
+}
+
+/* 侧栏打开时，画布区的可用宽由 grid 自动让位 —— 无需额外规则：
+   `.app-shell` 的列定义在平板档是 `84px minmax(0,1fr)`，
+   §2 把左右面板放回网格列后，需要把**列定义**改掉才排得下。 */
+@media (min-width: 1024px) and (pointer: coarse) and (max-width: 1400px) {
+  /* 平板档原本是「工具条 84px | 画布」两列；侧栏档改成
+     「工具条 | 左面板(按需) | 画布 | 右面板(按需)」。
+     `auto` 让收起态那一列自然收成 0（配合上面的 width:0）。
+     ⚠️ 列序是 1=工具条 / 2=左面板 / 3=画布 / 4=右面板，四个都要显式定位，
+        否则自动放置会把面板塞进**已有元素后面**的隐式列。 */
+  .app-shell {
+    grid-template-columns: 84px auto minmax(0, 1fr) auto;
+    /* 顶栏横跨 4 列 ⇒ 必须显式 -1（`1 / -1` 在隐式列存在时会算错） */
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .tool-rail {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .workspace {
+    grid-column: 3;
+    grid-row: 2;
+  }
+
+  .topbar {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  /* 隐藏的 file input 等（`.hidden-input`）不参与网格放置 */
+  .hidden-input {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   §3 三个滑条的命中区 22px → 44px（粗指针档，可见盒与行高都不动）
+   ---------------------------------------------------------------------------
+   实测：`input[type=range]`（输出宽度 / 色数上限 / 背景容差）在粗指针档高 22px，
+   低于 44px 触控目标；手指稍微偏一点就抓不住，还会误触相邻行。
+
+   做法（与仓库 R3「只撑命中区、可见盒与行高一律不动」同源）：
+     用 `padding-block` 把元素盒撑到 44px，再用 `background-clip: content-box`
+     让**轨道视觉仍是原来的高度**（多出来的 padding 是透明的）。
+   ⚠️ 不加 `!important`：靠源码顺序覆盖，且限定到这三个控件所在的行，
+      不碰通用 `input` / `range` 规则。
+   --------------------------------------------------------------------------- */
+@media (pointer: coarse) {
+  .app-shell .params-card input[type='range'],
+  .app-shell .import-settings input[type='range'],
+  .app-shell .param-row input[type='range'],
+  .app-shell .ai-card input[type='range'] {
+    /* 22px 可见 → 44px 命中（上下各补 11px）。
+       ⚠️ 必须同时把基态的 `min-height: 22px` 清掉并固定 `height`：
+          只加 padding 会被 `min-height:22px` 与 flex 行的交叉轴拉伸
+          **吃掉一部分**（实测只到 38px，不是 44px）。
+          这里显式 height + 0 min-height，让盒子精确等于 22 + 11×2 = 44。 */
+    height: 44px;
+    min-height: 0;
+    padding-block: 11px;
+    background-clip: content-box;
+    /* 触摸时不要因为拖到行外就丢焦点 */
+    touch-action: pan-y;
+  }
+}
+
+/* ============================================================================
+   ▲▲▲ 手机端 / iPad 端优化 块结束 ▲▲▲
+   ========================================================================== */
