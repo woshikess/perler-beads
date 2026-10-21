@@ -1,11 +1,9 @@
 import { getColor } from './palette.js';
 import GeneratingHeart from './GeneratingHeart.js';
-import { CloseIcon } from './icons.js';
-// 本仓库**没有打包器**：`react-dom` 没有 import-map 条目（只有 `react-dom/client`），
-// `ReactDOM` 是 `vendor/react-dom.production.min.js` 挂上的 UMD 全局；`src/global.d.ts`
-// 里只声明了 `createRoot`。portal 需要 `createPortal` ⇒ 就地收窄类型，
-// **不去改 `global.d.ts`**（它不在本轮允许改动的文件清单里）。
-const reactDomPortal = ReactDOM;
+// （2026-10-21）原来这里有一段 `reactDomPortal` 收窄声明，只服务于"抽屉内关闭按钮"的 portal。
+// 该按钮随用户反馈删除（点抽屉外即可关闭），portal 不再需要 ⇒ 声明一并移除。
+// ⚠️ 若将来又要往抽屉里 portal 内容，`ReactDOM.createPortal` 需要按同样的方式收窄类型
+//    （`react-dom` 没有 import-map 条目，`global.d.ts` 只声明了 `createRoot`）。
 // W5-P3：单层快速路径下"空格子"复用的常量数组（drawBeadStack 只读它，不会修改）。
 const EMPTY_BEAD_STACK = [];
 /**
@@ -101,10 +99,8 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
     const [referenceImage, setReferenceImage] = useState(null);
     const [activePointerMode, setActivePointerMode] = useState(null);
     // W3：`openPanel` / `panelLayout` 已提升到 `App`（见 `Props` 里的注释）。
-    // W1/W2：**抽屉内可见关闭按钮的挂载点**。抽屉的 DOM 属于 `App.tsx` 的两个 `<aside>`，
-    // 这里不该为它大改 ⇒ 仍用 portal 挂进去。宿主必须**挂载之后**才查得到 ⇒ 存在 state 里（首帧为 null）。
-    // ⚠️ 顶栏那个 `toggles` 宿主**第 3 批已删除**：开关不再放在顶栏，改成工具条上的 3 个面板入口。
-    const [panelHosts, setPanelHosts] = useState({ left: null, right: null });
+    // ⚠️ 抽屉内可见关闭按钮已于 2026-10-21 删除（用户：点抽屉外就能关，叉号纯占位），
+    //    它原来用的 portal 宿主 state（`panelHosts`）随之整块移除。
     /*
      * B18（用户第 15 轮第 8a 条）：**吸管长按放大镜**。
      *
@@ -217,13 +213,6 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
     // 面板断点是否命中 ⇒ 第 3 批起由 `App`（`useMediaQuery(PANEL_LAYOUT_QUERY)`）算好后当 prop 传下来，
     // 这里不再自己 matchMedia（两处各判一次迟早会漂移）。
     // `PANEL_LAYOUT_QUERY` 仍从 `useMediaQuery.ts` 引入，供下面的注释与宿主查询引用同一处口径。
-    // portal 宿主：左右抽屉本身（顶栏那个 `toggles` 宿主第 3 批已随开关一起删除）。
-    useEffect(() => {
-        setPanelHosts({
-            left: document.querySelector('.left-panel'),
-            right: document.querySelector('.right-panel'),
-        });
-    }, []);
     // 面板开合：`.app-shell` 上的 `is-left-open/is-right-open` 类与"抽屉外一切 inert"的 effect
     // **第 3 批搬到了 `App.tsx`**（在那里才能同时看到顶栏、`.tool-rail` 与两个抽屉，
     // 而 `.tool-rail` 必须**排除在 inert 之外** —— 它现在是抽屉的分区切换器）。
@@ -1217,12 +1206,6 @@ export default function WorkspaceCanvas({ project, selectedColorId, highlightedC
                 "%"),
             React.createElement("button", { onClick: () => stepZoom(1.1) }, "+"),
             React.createElement("button", { onClick: fitToWindow }, fitLabel)),
-        panelLayout && openPanel === 'left' && panelHosts.left && reactDomPortal.createPortal(React.createElement("div", { className: "panel-close-row" },
-            React.createElement("button", { type: "button", className: "panel-close-button", "aria-label": "\u5173\u95ED\u9762\u677F / Close panel", title: "\u5173\u95ED\u9762\u677F / Close panel", onClick: () => setOpenPanel(null) },
-                React.createElement(CloseIcon, null))), panelHosts.left),
-        panelLayout && openPanel === 'right' && panelHosts.right && reactDomPortal.createPortal(React.createElement("div", { className: "panel-close-row" },
-            React.createElement("button", { type: "button", className: "panel-close-button", "aria-label": "\u5173\u95ED\u53F3\u4FA7\u9762\u677F / Close right panel", title: "\u5173\u95ED\u53F3\u4FA7\u9762\u677F / Close right panel", onClick: () => setOpenPanel(null) },
-                React.createElement(CloseIcon, null))), panelHosts.right),
         panelLayout && openPanel && React.createElement("div", { className: "panel-scrim", "aria-hidden": "true", onClick: () => setOpenPanel(null) })));
 }
 function drawPattern(context, project, cellSize, zoom, pan, highlightedColorId, highlightedCellIndices, tool, clipboardPhase, selectedColorId, eraserSize, eraserScope, moveMode, mirrorMode, clipboardPattern, copyMode, copySelectionIndices, shapeDraft, hoverPoint, canEdit, referenceImage, textToolValue, textToolDirection, textToolSize, textToolSpacing, formatColorCode) {

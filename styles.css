@@ -5623,11 +5623,10 @@ body {
     gap: 10px;
     width: min(320px, 88vw);
     padding: calc(10px + env(safe-area-inset-top, 0px)) calc(10px + env(safe-area-inset-right, 0px)) 10px 10px;
-    /* 底部留 66px：抽屉内的**可见关闭按钮**（sticky 在抽屉底）要有落脚处，
-       内容滚到底时不会压在它下面。⚠️ 这条注释在 2026-09-20 第 3 批被改写 ——
-       原文写的是"给浮动的 `.panel-toggle-left` 让位"，而那个开关**本批已删除**，
-       留着旧理由会让下一个人以为这里还在给一个不存在的东西留白。 */
-    padding-bottom: calc(66px + env(safe-area-inset-bottom, 0px));
+    /* （2026-10-21）底部从 66px 改回 10px：那 66px 原本是给"抽屉内可见关闭按钮"
+       （sticky 在抽屉底）留的落脚处，按钮已按用户要求删除 ⇒ 这 66px 成了纯空白，
+       在 iPad / 手机上表现为抽屉内容底部多出一大片。 */
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
     overflow: auto;
     overscroll-behavior: contain;
     touch-action: pan-y;
@@ -5949,66 +5948,11 @@ body {
     transform: translateX(0);
   }
 
-  /* ---- 第 3 批：原来的「抽屉开关（顶栏 leading 槽位）」规则整段删除 ----
-     那段（`.panel-toggle` 的 44×44 方块 + `.is-left-open [data-panel-toggle='left']` 的高亮）
-     随顶栏那两个开关一起退场：开关元素不再渲染，留着规则只会让下一个人以为它还在。
-     打开/关闭抽屉的出口现在是：① 工具条上的 3 个面板条目（可反复切换分区）；
-     ② 抽屉内的可见关闭按钮（`.panel-close-button`，见下）；③ Esc；④ 点遮罩。 */
-
-  /* ---- 抽屉内的**可见关闭按钮**（APG Dialog(Modal)：Windows under a modal dialog are inert
-     + 要有可见关闭按钮）。挂在抽屉 DOM 的最后一个子节点上（portal），
-     `margin-top: auto` 把它推到抽屉底部、`position: sticky; bottom: 0` 让它滚到哪儿都看得见。
-     底部本来就为旧的浮动开关留了 66px 的 padding，所以**布局一行都不动**、也不盖内容。
-
-     🔴 B11 补的一行 `order: 1`（**为什么不能只靠 `margin-top: auto`**）：
-     这个关闭行是 `WorkspaceCanvas` 用 **portal 挂进抽屉**的，它**不属于 `App` 的 children 序列**
-     ⇒ 抽屉里的分区被换掉时（「素材 ↕ 参考」是条件渲染，整段卸载再挂载），React 只对**自己知道**
-     的那串兄弟节点做插入/删除，新挂上来的卡片可能被插到**关闭行之后** ⇒ 这个行落到了 DOM 的第一位，
-     `margin-top: auto` 与 `sticky bottom: 0` 都失效：**关闭按钮会跳到抽屉顶部、压在卡头上**
-     （实测 iPad 1024×768「参考」态：按钮 y=139..189，而"刚打开"态是 y=658..702）。
-     取证：`%TEMP%\b11_impl\_probe_refclose.cjs`（基线 c721cfa 与本批**逐字节相同** ⇒ 这不是本批引入的，
-     但本批把"三个条目都从右侧开、来回切"变成了主路径，所以顺手根修）。
-     `order` 只改**视觉顺序**、不改 DOM 顺序 ⇒ 与"React 何时插入"彻底解耦，一行覆盖两个抽屉
-     （`.left-panel` / `.right-panel` 都是 `display:flex; flex-direction:column`）。 */
-  .panel-close-row {
-    position: sticky;
-    bottom: 0;
-    z-index: 3;
-    display: flex;
-    justify-content: flex-end;
-    /* `margin-top: auto` 把它推到抽屉底部；`order: 1`（所有卡片都是默认的 0）
-       **把"视觉位置"与"DOM 位置"解耦** —— 原因见上面那段 🔴 说明。 */
-    order: 1;
-    margin-top: auto;
-    padding-top: 6px;
-  }
-
-  .panel-close-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 44px;
-    min-width: 44px;
-    height: 44px;
-    min-height: 44px;
-    padding: 0;
-    border: 1px solid rgba(17, 24, 39, 0.14);
-    border-radius: 12px;
-    background: rgba(255, 253, 248, 0.96);
-    box-shadow: var(--shadow-soft);
-    color: #374151;
-  }
-
-  .panel-close-button svg {
-    display: block;
-    width: 18px;
-    height: 18px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.9;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
+  /* （2026-10-21）原来的「抽屉内可见关闭按钮」（`.panel-close-row` / `.panel-close-button`）
+     **已整段删除** —— 用户反馈：「点击抽屉之外就会关闭抽屉，完全不需要一个占位置的叉号」。
+     连带移除：按钮本体（`WorkspaceCanvas.tsx` 的 portal）、它的挂载点 state、这里约 60 行样式，
+     以及 `.left-panel` 为它预留的 `padding-bottom: 66px`。
+     现在关闭抽屉的出口：① 工具条上的面板条目（再点一次收起）② Esc ③ 点遮罩。 */
 
   /* `.zoom-controls` 不必再给右下角的浮动开关让位（开关已经不在画布上了）——
      基础规则里的 right: 14px 现在直接生效，这里不再覆盖。 */
